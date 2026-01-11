@@ -1,0 +1,7 @@
+services:
+  deye-monitor:
+    build: .
+    container_name: deye_monitor
+    restart: always
+    env_file:
+      - .env
