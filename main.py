@@ -100,6 +100,7 @@ class DeyeStatusMonitor:
     def __init__(self, pool):
         self.pool = pool
         self.is_grid_online = None
+        self.last_battery_soc = None
         self.running = True
 
     async def broadcast(self, text):
@@ -126,13 +127,14 @@ class DeyeStatusMonitor:
         inv = None
         try:
             inv = PySolarmanV5(INVERTER_IP, LOGGER_SERIAL, socket_timeout=5, verbose=False)
-            data = inv.read_holding_registers(GRID_V_REG, 15)
+            data = inv.read_holding_registers(GRID_V_REG, 35)
             grid_v = data[0] / 10.0
             current_mode = data[14]
-            return grid_v, current_mode
+            battery_soc = data[34]
+            return grid_v, current_mode, battery_soc
         except Exception as e:
             logger.error(f"Read error: {e}")
-            return None, None
+            return None, None, None
         finally:
             if inv:
                 try:
@@ -143,7 +145,7 @@ class DeyeStatusMonitor:
     async def check(self):
         loop = asyncio.get_running_loop()
         try:
-            grid_v, current_mode = await loop.run_in_executor(None, self.read_inverter)
+            grid_v, current_mode, battery_soc = await loop.run_in_executor(None, self.read_inverter)
         except Exception as e:
             logger.error(f"Executor error: {e}")
             return
@@ -151,12 +153,26 @@ class DeyeStatusMonitor:
         if grid_v is None:
             return
 
+        if self.last_battery_soc is not None and battery_soc is not None:
+            if battery_soc == 100 and self.last_battery_soc < 100:
+                await self.broadcast(f"🔋 <b>Battery Fully Charged</b>\nLevel: 100%")
+            elif battery_soc <= 75 < self.last_battery_soc:
+                await self.broadcast(f"📉 <b>Battery Discharging</b>\nLevel: {battery_soc}%")
+            elif battery_soc <= 50 < self.last_battery_soc:
+                await self.broadcast(f"📉 <b>Battery Discharging</b>\nLevel: {battery_soc}%")
+            elif battery_soc <= 25 < self.last_battery_soc:
+                await self.broadcast(f"⚠️ <b>Battery Low</b>\nLevel: {battery_soc}%")
+        
+        if battery_soc is not None:
+            self.last_battery_soc = battery_soc
+
         currently_online = (grid_v > VOLTAGE_THRESHOLD) and (current_mode != 300)
 
         if self.is_grid_online is None:
             self.is_grid_online = currently_online
+            self.last_battery_soc = battery_soc
             status_label = "GRID" if currently_online else "BATTERY"
-            logger.info(f"Monitor started. Current mode: {status_label} ({current_mode}), Voltage: {grid_v}V")
+            logger.info(f"Monitor started. Current mode: {status_label} ({current_mode}), Voltage: {grid_v}V, Battery: {battery_soc}%")
             return
 
         if currently_online != self.is_grid_online:
@@ -164,7 +180,7 @@ class DeyeStatusMonitor:
             await self.notify(not currently_online, grid_v)
         else:
             status_text = "OK" if currently_online else "BATTERY"
-            logger.debug(f"Mode: {current_mode}, Grid: {grid_v}V | {status_text}")
+            logger.debug(f"Mode: {current_mode}, Grid: {grid_v}V, Batt: {battery_soc}% | {status_text}")
 
     async def run(self):
         logger.info(f"Starting Deye Inverter Monitor for {INVERTER_IP}")
