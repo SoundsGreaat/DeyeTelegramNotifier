@@ -1,3 +1,5 @@
 pysolarmanv5>=3.0.0
 requests>=2.28.0
 python-dotenv>=1.0.0
+aiogram>=3.0.0
+asyncpg>=0.28.0

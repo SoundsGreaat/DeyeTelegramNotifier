@@ -1,11 +1,13 @@
 import os
-import time
+import asyncio
 import logging
-import signal
 import sys
-import requests
-from dotenv import load_dotenv
+import asyncpg
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.enums import ParseMode
 from pysolarmanv5 import PySolarmanV5
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -17,9 +19,13 @@ except ValueError:
     sys.exit(1)
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '10'))
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+
+PG_HOST = os.getenv('POSTGRES_HOST', 'postgres')
+PG_USER = os.getenv('POSTGRES_USER', 'postgres')
+PG_PASS = os.getenv('POSTGRES_PASSWORD', 'postgres')
+PG_DB = os.getenv('POSTGRES_DB', 'deye_bot')
 
 GRID_V_REG = 150
 MODE_REG = 164
@@ -29,73 +35,104 @@ logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
     format='[%(asctime)s] %(levelname)s: %(message)s',
     datefmt='%H:%M:%S',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
+if not TELEGRAM_TOKEN:
+    logger.error("TELEGRAM_TOKEN is required")
+    sys.exit(1)
+
+bot = Bot(token=TELEGRAM_TOKEN)
+dp = Dispatcher()
+
+
+async def get_db_pool():
+    for i in range(10):
+        try:
+            return await asyncpg.create_pool(user=PG_USER, password=PG_PASS, database=PG_DB, host=PG_HOST)
+        except Exception as e:
+            logger.warning(f"Waiting for database... ({e})")
+            await asyncio.sleep(2)
+    raise Exception("Could not connect to database")
+
+
+async def init_db(pool):
+    async with pool.acquire() as conn:
+        await conn.execute('''
+                           CREATE TABLE IF NOT EXISTS chats
+                           (
+                               chat_id    BIGINT PRIMARY KEY,
+                               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                           )
+                           ''')
+
+
+async def add_chat(pool, chat_id):
+    async with pool.acquire() as conn:
+        await conn.execute('INSERT INTO chats (chat_id) VALUES ($1) ON CONFLICT (chat_id) DO NOTHING', chat_id)
+
+
+async def remove_chat(pool, chat_id):
+    async with pool.acquire() as conn:
+        await conn.execute('DELETE FROM chats WHERE chat_id = $1', chat_id)
+
+
+async def get_chats(pool):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch('SELECT chat_id FROM chats')
+        return [row['chat_id'] for row in rows]
+
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, pool: asyncpg.Pool):
+    await add_chat(pool, message.chat.id)
+    await message.answer("✅ You have subscribed to inverter status notifications.")
+
+
+@dp.message(Command("stop"))
+async def cmd_stop(message: types.Message, pool: asyncpg.Pool):
+    await remove_chat(pool, message.chat.id)
+    await message.answer("❌ You have unsubscribed from notifications.")
+
 
 class DeyeStatusMonitor:
-    def __init__(self):
+    def __init__(self, pool):
+        self.pool = pool
         self.is_grid_online = None
         self.running = True
 
-        if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-            logger.warning("Telegram settings are missing. Notifications will be printed to log only.")
-
-    def send_telegram(self, text):
-        if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+    async def broadcast(self, text):
+        chat_ids = await get_chats(self.pool)
+        if not chat_ids:
             return
 
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML"
-        }
-        try:
-            response = requests.post(url, json=payload, timeout=10)
-            response.raise_for_status()
-        except Exception as e:
-            logger.error(f"Failed to send Telegram message: {e}")
+        for chat_id in chat_ids:
+            try:
+                await bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Failed to send to {chat_id}: {e}")
 
-    def notify(self, is_battery, voltage):
+    async def notify(self, is_battery, voltage):
         if is_battery:
-            msg = f"⚠️ <b>Warning: Battery Power</b>\nGrid lost or voltage dropped to {voltage}V"
+            msg = f"⚠️ <b>Warning: Battery Power</b>\nGrid voltage: {voltage}V"
         else:
-            msg = f"✅ <b>Power Restored</b>\nCurrent voltage: {voltage}V"
+            msg = f"✅ <b>Power Restored</b>\nGrid voltage: {voltage}V"
 
         logger.info(msg.replace('\n', ' ').replace('<b>', '').replace('</b>', ''))
-        self.send_telegram(msg)
+        await self.broadcast(msg)
 
-    def check(self):
+    def read_inverter(self):
         inv = None
         try:
             inv = PySolarmanV5(INVERTER_IP, LOGGER_SERIAL, socket_timeout=5, verbose=False)
-
             data = inv.read_holding_registers(GRID_V_REG, 15)
-
             grid_v = data[0] / 10.0
             current_mode = data[14]
-
-            currently_online = (grid_v > VOLTAGE_THRESHOLD) and (current_mode != 300)
-
-            if self.is_grid_online is None:
-                self.is_grid_online = currently_online
-                status_label = "GRID" if currently_online else "BATTERY"
-                logger.info(f"Monitor started. Current mode: {status_label} ({current_mode}), Voltage: {grid_v}V")
-                return
-
-            if currently_online != self.is_grid_online:
-                self.is_grid_online = currently_online
-                self.notify(not currently_online, grid_v)
-            else:
-                status_text = "OK" if currently_online else "BATTERY"
-                logger.debug(f"Mode: {current_mode}, Grid: {grid_v}V | {status_text}")
-
+            return grid_v, current_mode
         except Exception as e:
-            logger.error(f"Connection/Read error: {e}")
+            logger.error(f"Read error: {e}")
+            return None, None
         finally:
             if inv:
                 try:
@@ -103,21 +140,54 @@ class DeyeStatusMonitor:
                 except:
                     pass
 
-    def run(self):
+    async def check(self):
+        loop = asyncio.get_running_loop()
+        try:
+            grid_v, current_mode = await loop.run_in_executor(None, self.read_inverter)
+        except Exception as e:
+            logger.error(f"Executor error: {e}")
+            return
+
+        if grid_v is None:
+            return
+
+        currently_online = (grid_v > VOLTAGE_THRESHOLD) and (current_mode != 300)
+
+        if self.is_grid_online is None:
+            self.is_grid_online = currently_online
+            status_label = "GRID" if currently_online else "BATTERY"
+            logger.info(f"Monitor started. Current mode: {status_label} ({current_mode}), Voltage: {grid_v}V")
+            return
+
+        if currently_online != self.is_grid_online:
+            self.is_grid_online = currently_online
+            await self.notify(not currently_online, grid_v)
+        else:
+            status_text = "OK" if currently_online else "BATTERY"
+            logger.debug(f"Mode: {current_mode}, Grid: {grid_v}V | {status_text}")
+
+    async def run(self):
         logger.info(f"Starting Deye Inverter Monitor for {INVERTER_IP}")
         while self.running:
-            self.check()
-            time.sleep(CHECK_INTERVAL)
+            await self.check()
+            await asyncio.sleep(CHECK_INTERVAL)
 
-    def stop(self, signum, frame):
-        logger.info("Stopping monitor...")
-        self.running = False
+
+async def main():
+    pool = await get_db_pool()
+    await init_db(pool)
+
+    monitor = DeyeStatusMonitor(pool)
+
+    monitor_task = asyncio.create_task(monitor.run())
+
+    try:
+        await dp.start_polling(bot, pool=pool)
+    finally:
+        monitor.running = False
+        await monitor_task
+        await pool.close()
 
 
 if __name__ == "__main__":
-    monitor = DeyeStatusMonitor()
-
-    signal.signal(signal.SIGINT, monitor.stop)
-    signal.signal(signal.SIGTERM, monitor.stop)
-
-    monitor.run()
+    asyncio.run(main())
