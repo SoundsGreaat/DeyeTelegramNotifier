@@ -3,11 +3,13 @@ import asyncio
 import logging
 import sys
 import asyncpg
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.enums import ParseMode
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from pysolarmanv5 import PySolarmanV5
 from dotenv import load_dotenv
+import locales
 
 load_dotenv()
 
@@ -63,14 +65,28 @@ async def init_db(pool):
                            CREATE TABLE IF NOT EXISTS chats
                            (
                                chat_id    BIGINT PRIMARY KEY,
-                               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                               created_at TIMESTAMP  DEFAULT CURRENT_TIMESTAMP,
+                               language   VARCHAR(5) DEFAULT 'en'
                            )
                            ''')
+        try:
+            await conn.execute('ALTER TABLE chats ADD COLUMN IF NOT EXISTS language VARCHAR(5) DEFAULT \'en\'')
+        except Exception:
+            pass
 
 
-async def add_chat(pool, chat_id):
+async def add_chat(pool, chat_id, language='en'):
     async with pool.acquire() as conn:
-        await conn.execute('INSERT INTO chats (chat_id) VALUES ($1) ON CONFLICT (chat_id) DO NOTHING', chat_id)
+        await conn.execute('''
+                           INSERT INTO chats (chat_id, language)
+                           VALUES ($1, $2)
+                           ON CONFLICT (chat_id) DO UPDATE SET language = $2
+                           ''', chat_id, language)
+
+
+async def set_chat_language(pool, chat_id, language):
+    async with pool.acquire() as conn:
+        await conn.execute('UPDATE chats SET language = $1 WHERE chat_id = $2', language, chat_id)
 
 
 async def remove_chat(pool, chat_id):
@@ -80,20 +96,44 @@ async def remove_chat(pool, chat_id):
 
 async def get_chats(pool):
     async with pool.acquire() as conn:
-        rows = await conn.fetch('SELECT chat_id FROM chats')
-        return [row['chat_id'] for row in rows]
+        rows = await conn.fetch('SELECT chat_id, language FROM chats')
+        return [(row['chat_id'], row['language']) for row in rows]
 
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, pool: asyncpg.Pool):
-    await add_chat(pool, message.chat.id)
-    await message.answer("✅ You have subscribed to inverter status notifications.")
+    user_lang = message.from_user.language_code if message.from_user.language_code in locales.LANGUAGES else 'en'
+    await add_chat(pool, message.chat.id, user_lang)
+    await message.answer(locales.get_message(user_lang, "start"))
 
 
 @dp.message(Command("stop"))
 async def cmd_stop(message: types.Message, pool: asyncpg.Pool):
     await remove_chat(pool, message.chat.id)
-    await message.answer("❌ You have unsubscribed from notifications.")
+    user_lang = message.from_user.language_code if message.from_user.language_code in locales.LANGUAGES else 'en'
+    await message.answer(locales.get_message(user_lang, "stop"))
+
+
+@dp.message(Command("lang", "language"))
+async def cmd_lang(message: types.Message):
+    builder = InlineKeyboardBuilder()
+    for code, name in locales.LANGUAGES.items():
+        builder.button(text=name, callback_data=f"lang_{code}")
+    builder.adjust(2)
+
+    user_lang = message.from_user.language_code if message.from_user.language_code in locales.LANGUAGES else 'en'
+    await message.answer(locales.get_message(user_lang, "select_lang"), reply_markup=builder.as_markup())
+
+
+@dp.callback_query(F.data.startswith("lang_"))
+async def callback_lang(callback: types.CallbackQuery, pool: asyncpg.Pool):
+    lang_code = callback.data.split("_")[1]
+    if lang_code in locales.LANGUAGES:
+        await set_chat_language(pool, callback.message.chat.id, lang_code)
+        await callback.message.answer(locales.get_message(lang_code, "lang_set"))
+        await callback.answer()
+    else:
+        await callback.answer("Invalid language")
 
 
 class DeyeStatusMonitor:
@@ -103,25 +143,26 @@ class DeyeStatusMonitor:
         self.last_battery_soc = None
         self.running = True
 
-    async def broadcast(self, text):
-        chat_ids = await get_chats(self.pool)
-        if not chat_ids:
+    async def broadcast(self, key, **kwargs):
+        chats = await get_chats(self.pool)
+        if not chats:
             return
 
-        for chat_id in chat_ids:
+        for chat_id, language in chats:
             try:
+                text = locales.get_message(language, key, **kwargs)
                 await bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
             except Exception as e:
                 logger.error(f"Failed to send to {chat_id}: {e}")
 
     async def notify(self, is_battery, voltage):
         if is_battery:
-            msg = f"⚠️ <b>Warning: Battery Power</b>\nGrid voltage: {voltage}V"
+            await self.broadcast("warning_battery", voltage=voltage)
         else:
-            msg = f"✅ <b>Power Restored</b>\nGrid voltage: {voltage}V"
+            await self.broadcast("power_restored", voltage=voltage)
 
-        logger.info(msg.replace('\n', ' ').replace('<b>', '').replace('</b>', ''))
-        await self.broadcast(msg)
+        log_msg = f"Notify: Battery={is_battery}, Voltage={voltage}"
+        logger.info(log_msg)
 
     def read_inverter(self):
         inv = None
@@ -155,14 +196,14 @@ class DeyeStatusMonitor:
 
         if self.last_battery_soc is not None and battery_soc is not None:
             if battery_soc == 100 and self.last_battery_soc < 100:
-                await self.broadcast(f"🔋 <b>Battery Fully Charged</b>\nLevel: 100%")
+                await self.broadcast("battery_full")
             elif battery_soc <= 75 < self.last_battery_soc:
-                await self.broadcast(f"📉 <b>Battery Discharging</b>\nLevel: {battery_soc}%")
+                await self.broadcast("battery_discharging", level=battery_soc)
             elif battery_soc <= 50 < self.last_battery_soc:
-                await self.broadcast(f"📉 <b>Battery Discharging</b>\nLevel: {battery_soc}%")
+                await self.broadcast("battery_discharging", level=battery_soc)
             elif battery_soc <= 25 < self.last_battery_soc:
-                await self.broadcast(f"⚠️ <b>Battery Low</b>\nLevel: {battery_soc}%")
-        
+                await self.broadcast("battery_low", level=battery_soc)
+
         if battery_soc is not None:
             self.last_battery_soc = battery_soc
 
@@ -172,7 +213,8 @@ class DeyeStatusMonitor:
             self.is_grid_online = currently_online
             self.last_battery_soc = battery_soc
             status_label = "GRID" if currently_online else "BATTERY"
-            logger.info(f"Monitor started. Current mode: {status_label} ({current_mode}), Voltage: {grid_v}V, Battery: {battery_soc}%")
+            logger.info(
+                f"Monitor started. Current mode: {status_label} ({current_mode}), Voltage: {grid_v}V, Battery: {battery_soc}%")
             return
 
         if currently_online != self.is_grid_online:
