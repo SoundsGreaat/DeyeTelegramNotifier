@@ -9,6 +9,9 @@ MESSAGES = {
         "battery_full": "🔋 <b>Battery Fully Charged</b>\nLevel: 100%",
         "battery_discharging": "📉 <b>Battery Discharging</b>\nLevel: {level}%",
         "battery_low": "⚠️ <b>Battery Low</b>\nLevel: {level}%",
+        "status": "📊 <b>System Status</b>\nGrid: {grid_status}\nVoltage: {voltage}V\nBattery: {battery}%",
+        "online": "Online 🟢",
+        "offline": "Offline 🔴",
     },
     "uk": {
         "start": "✅ Ви підписалися на сповіщення про статус інвертора.",
@@ -20,6 +23,9 @@ MESSAGES = {
         "battery_full": "🔋 <b>Батарея повністю заряджена</b>\nРівень: 100%",
         "battery_discharging": "📉 <b>Батарея розряджається</b>\nРівень: {level}%",
         "battery_low": "⚠️ <b>Низький заряд батареї</b>\nРівень: {level}%",
+        "status": "📊 <b>Статус системи</b>\nМережа: {grid_status}\nНапруга: {voltage}В\nБатарея: {battery}%",
+        "online": "В мережі 🟢",
+        "offline": "Відсутня 🔴",
     },
     "es": {
         "start": "✅ Te has suscrito a las notificaciones del estado del inversor.",
@@ -31,6 +37,9 @@ MESSAGES = {
         "battery_full": "🔋 <b>Batería Completamente Cargada</b>\nNivel: 100%",
         "battery_discharging": "📉 <b>Batería Descargando</b>\nNivel: {level}%",
         "battery_low": "⚠️ <b>Batería Baja</b>\nNivel: {level}%",
+        "status": "📊 <b>Estado del Sistema</b>\nRed: {grid_status}\nVoltaje: {voltage}V\nBatería: {battery}%",
+        "online": "En línea 🟢",
+        "offline": "Fuera de línea 🔴",
     },
     "de": {
         "start": "✅ Sie haben sich für Wechselrichter-Statusbenachrichtigungen angemeldet.",
@@ -42,6 +51,9 @@ MESSAGES = {
         "battery_full": "🔋 <b>Batterie voll geladen</b>\nStand: 100%",
         "battery_discharging": "📉 <b>Batterie entlädt</b>\nStand: {level}%",
         "battery_low": "⚠️ <b>Batteriestand niedrig</b>\nStand: {level}%",
+        "status": "📊 <b>Systemstatus</b>\nNetz: {grid_status}\nSpannung: {voltage}V\nBatterie: {battery}%",
+        "online": "Online 🟢",
+        "offline": "Offline 🔴",
     }
 }
 

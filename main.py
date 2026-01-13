@@ -136,6 +136,45 @@ async def callback_lang(callback: types.CallbackQuery, pool: asyncpg.Pool):
         await callback.answer("Invalid language")
 
 
+@dp.message(Command("status"))
+async def cmd_status(message: types.Message):
+    user_lang = message.from_user.language_code if message.from_user.language_code in locales.LANGUAGES else 'en'
+    wait_msg = await message.answer("⏳")
+
+    def read_inv():
+        inv = None
+        try:
+            inv = PySolarmanV5(INVERTER_IP, LOGGER_SERIAL, socket_timeout=5, verbose=False)
+            data = inv.read_holding_registers(GRID_V_REG, 35)
+            return data[0] / 10.0, data[14], data[34]
+        except Exception as e:
+            logger.error(f"Manual check error: {e}")
+            return None, None, None
+        finally:
+            if inv:
+                try:
+                    inv.disconnect()
+                except:
+                    pass
+
+    loop = asyncio.get_running_loop()
+    grid_v, current_mode, battery_soc = await loop.run_in_executor(None, read_inv)
+
+    if grid_v is None:
+        await wait_msg.edit_text("❌ Connection failed")
+        return
+
+    is_online = (grid_v > VOLTAGE_THRESHOLD) and (current_mode != 300)
+    grid_status_text = locales.get_message(user_lang, "online" if is_online else "offline")
+
+    text = locales.get_message(user_lang, "status",
+                               grid_status=grid_status_text,
+                               voltage=grid_v,
+                               battery=battery_soc)
+
+    await wait_msg.edit_text(text, parse_mode=ParseMode.HTML)
+
+
 class DeyeStatusMonitor:
     def __init__(self, pool):
         self.pool = pool
