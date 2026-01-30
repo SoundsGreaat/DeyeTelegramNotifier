@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import sys
+from datetime import datetime
 import asyncpg
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -188,6 +189,15 @@ class DeyeStatusMonitor:
         self.is_grid_online = None
         self.last_battery_soc = None
         self.running = True
+        self.last_status_time = datetime.now()
+
+    def format_duration(self, delta):
+        total_seconds = int(delta.total_seconds())
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m {seconds}s"
 
     async def broadcast(self, key, **kwargs):
         chats = await get_chats(self.pool)
@@ -201,13 +211,13 @@ class DeyeStatusMonitor:
             except Exception as e:
                 logger.error(f"Failed to send to {chat_id}: {e}")
 
-    async def notify(self, is_battery, voltage):
+    async def notify(self, is_battery, voltage, load=0, duration=""):
         if is_battery:
-            await self.broadcast("warning_battery", voltage=voltage)
+            await self.broadcast("warning_battery", voltage=voltage, load=load, duration=duration)
         else:
-            await self.broadcast("power_restored", voltage=voltage)
+            await self.broadcast("power_restored", voltage=voltage, duration=duration)
 
-        log_msg = f"Notify: Battery={is_battery}, Voltage={voltage}"
+        log_msg = f"Notify: Battery={is_battery}, Voltage={voltage}, Load={load}, Duration={duration}"
         logger.info(log_msg)
 
     def read_inverter(self):
@@ -218,10 +228,11 @@ class DeyeStatusMonitor:
             grid_v = data[0] / 10.0
             current_mode = data[14]
             battery_soc = data[34]
-            return grid_v, current_mode, battery_soc
+            load_watts = data[28]
+            return grid_v, current_mode, battery_soc, load_watts
         except Exception as e:
             logger.error(f"Read error: {e}")
-            return None, None, None
+            return None, None, None, None
         finally:
             if inv:
                 try:
@@ -232,7 +243,7 @@ class DeyeStatusMonitor:
     async def check(self):
         loop = asyncio.get_running_loop()
         try:
-            grid_v, current_mode, battery_soc = await loop.run_in_executor(None, self.read_inverter)
+            grid_v, current_mode, battery_soc, load_watts = await loop.run_in_executor(None, self.read_inverter)
         except Exception as e:
             logger.error(f"Executor error: {e}")
             return
@@ -258,14 +269,18 @@ class DeyeStatusMonitor:
         if self.is_grid_online is None:
             self.is_grid_online = currently_online
             self.last_battery_soc = battery_soc
+            self.last_status_time = datetime.now()
             status_label = "GRID" if currently_online else "BATTERY"
             logger.info(
                 f"Monitor started. Current mode: {status_label} ({current_mode}), Voltage: {grid_v}V, Battery: {battery_soc}%")
             return
 
         if currently_online != self.is_grid_online:
+            now = datetime.now()
+            duration = self.format_duration(now - self.last_status_time)
+            self.last_status_time = now
             self.is_grid_online = currently_online
-            await self.notify(not currently_online, grid_v)
+            await self.notify(not currently_online, grid_v, load=load_watts, duration=duration)
         else:
             status_text = "OK" if currently_online else "BATTERY"
             logger.debug(f"Mode: {current_mode}, Grid: {grid_v}V, Batt: {battery_soc}% | {status_text}")
