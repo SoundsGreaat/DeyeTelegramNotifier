@@ -100,6 +100,12 @@ async def get_chats(pool):
         return [(row['chat_id'], row['language']) for row in rows]
 
 
+async def get_chat_language(pool, chat_id):
+    async with pool.acquire() as conn:
+        val = await conn.fetchval('SELECT language FROM chats WHERE chat_id = $1', chat_id)
+        return val or 'en'
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, pool: asyncpg.Pool):
     user_lang = message.from_user.language_code if message.from_user.language_code in locales.LANGUAGES else 'en'
@@ -137,8 +143,8 @@ async def callback_lang(callback: types.CallbackQuery, pool: asyncpg.Pool):
 
 
 @dp.message(Command("status"))
-async def cmd_status(message: types.Message):
-    user_lang = message.from_user.language_code if message.from_user.language_code in locales.LANGUAGES else 'en'
+async def cmd_status(message: types.Message, pool: asyncpg.Pool):
+    user_lang = await get_chat_language(pool, message.chat.id)
     wait_msg = await message.answer("⏳")
 
     def read_inv():
@@ -146,10 +152,10 @@ async def cmd_status(message: types.Message):
         try:
             inv = PySolarmanV5(INVERTER_IP, LOGGER_SERIAL, socket_timeout=5, verbose=False)
             data = inv.read_holding_registers(GRID_V_REG, 35)
-            return data[0] / 10.0, data[14], data[34]
+            return data[0] / 10.0, data[14], data[34], data[28]
         except Exception as e:
             logger.error(f"Manual check error: {e}")
-            return None, None, None
+            return None, None, None, None
         finally:
             if inv:
                 try:
@@ -158,7 +164,7 @@ async def cmd_status(message: types.Message):
                     pass
 
     loop = asyncio.get_running_loop()
-    grid_v, current_mode, battery_soc = await loop.run_in_executor(None, read_inv)
+    grid_v, current_mode, battery_soc, load_watts = await loop.run_in_executor(None, read_inv)
 
     if grid_v is None:
         await wait_msg.edit_text("❌ Connection failed")
@@ -170,7 +176,8 @@ async def cmd_status(message: types.Message):
     text = locales.get_message(user_lang, "status",
                                grid_status=grid_status_text,
                                voltage=grid_v,
-                               battery=battery_soc)
+                               battery=battery_soc,
+                               load=load_watts)
 
     await wait_msg.edit_text(text, parse_mode=ParseMode.HTML)
 
