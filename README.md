@@ -8,6 +8,7 @@ A Telegram bot that monitors the status of a Deye hybrid inverter using the Sola
 - **Telegram Notifications**: Alerts subscribed users about power outages and restoration.
 - **Multi-user Support**: Users can subscribe/unsubscribe via the bot.
 - **Database Storage**: Uses PostgreSQL to store subscriber data persistently.
+- **Optional Schedule Forecasts**: Provider-specific address lookup and next-change forecasts can be enabled without affecting worldwide deployments.
 - **Dockerized**: Easy deployment with Docker and Docker Compose.
 
 ## Prerequisites
@@ -33,6 +34,18 @@ TELEGRAM_TOKEN=your_telegram_bot_token
 
 # Logging
 LOG_LEVEL=INFO
+
+# Optional schedule forecast (disabled unless SCHEDULE_PROVIDER is set)
+# Leave these empty for a provider-agnostic worldwide deployment.
+SCHEDULE_PROVIDER=
+SCHEDULE_REGION_ID=
+SCHEDULE_DSO_ID=
+SCHEDULE_CITY_ID=
+SCHEDULE_STREET=
+SCHEDULE_HOUSE=
+SCHEDULE_TIMEZONE=UTC
+SCHEDULE_REFRESH_INTERVAL=600
+SCHEDULE_REQUEST_TIMEOUT=4
 
 # Database Settings (optional, defaults provided in docker-compose)
 POSTGRES_USER=postgres
