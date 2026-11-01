@@ -42,6 +42,7 @@ class Settings:
     telegram_token: str | None = field(default=None, repr=False)
     check_interval: int = 10
     log_level: str = "INFO"
+    min_load_watts: float = 10
     battery_capacity_kwh: float = 0
     battery_cutoff_soc: float = 20
     battery_inverter_efficiency: float = 0.9
@@ -65,6 +66,9 @@ class Settings:
     schedule_refresh_interval: int = 600
     schedule_request_timeout: float = 4
 
+    def has_meaningful_load(self, watts):
+        return watts is not None and math.isfinite(watts) and watts > 0 and watts >= self.min_load_watts
+
     @property
     def stats_max_gap_seconds(self):
         return max(60, self.check_interval * 3)
@@ -87,6 +91,7 @@ class Settings:
             telegram_token=os.getenv("TELEGRAM_TOKEN"),
             check_interval=int(os.getenv("CHECK_INTERVAL", "10")),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+            min_load_watts=_number("MIN_LOAD_WATTS", 10, 0, 1000000),
             battery_capacity_kwh=_number("BATTERY_CAPACITY_KWH", 0, 0, 100000),
             battery_cutoff_soc=_number("BATTERY_CUTOFF_SOC", 20, 0, 100),
             battery_inverter_efficiency=_number("BATTERY_INVERTER_EFFICIENCY", 0.9, 0.01, 1),

@@ -106,7 +106,7 @@ class DeyeStatusMonitor:
                 if (
                     reading is not None
                     and not reading.is_grid_online
-                    and reading.load_watts > 0
+                    and self.settings.has_meaningful_load(reading.load_watts)
                     and not load_already_sent
                     and self.last_status_time == outage_started
                 ):
@@ -128,11 +128,17 @@ class DeyeStatusMonitor:
     def charging_estimate(self):
         now = datetime.now(timezone.utc)
         reading = self.latest_reading
-        if reading is not None and reading.battery_current is not None:
+        if reading is not None and (
+            reading.battery_power_watts is not None or reading.battery_current is not None
+        ):
             if (now - self._reading_at).total_seconds() > self.settings.stats_max_gap_seconds:
                 return ChargingEstimate(False, None)
-            charging = reading.battery_current < -0.1 and reading.battery_soc < 100
-            return ChargingEstimate(charging, reading.battery_seconds(100) if charging else None)
+            charging = reading.is_charging
+            seconds = reading.battery_seconds(100) if charging and reading.battery_soc < 100 else None
+            if charging and reading.battery_soc < 100 and seconds is None:
+                trend = self.charge_estimator.estimate(now)
+                seconds = trend.seconds_remaining if trend.is_charging else None
+            return ChargingEstimate(charging, seconds)
         return self.charge_estimator.estimate(now)
 
     async def _observe_charge(self, now, battery_soc):
@@ -244,7 +250,7 @@ class DeyeStatusMonitor:
 
         if currently_online:
             await self._cancel_load_followup()
-        elif transitioned and load_watts == 0:
+        elif transitioned and not self.settings.has_meaningful_load(load_watts):
             await self._schedule_load_followup()
 
         await db_retry(
@@ -274,7 +280,10 @@ class DeyeStatusMonitor:
                 battery_cutoff_soc=cutoff,
                 charge_power_watts=reading.charge_power_watts if key == "battery_charging" else None,
             )
-            if load_watts > 0 and key in {"battery_discharging", "battery_low"}:
+            if self.settings.has_meaningful_load(load_watts) and key in {
+                "battery_discharging",
+                "battery_low",
+            }:
                 # The load has already reached subscribers in this milestone;
                 # cancel a pending delayed update, including after manual checks.
                 await self._cancel_load_followup()

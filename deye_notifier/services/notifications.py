@@ -28,6 +28,11 @@ class NotificationService:
             return
 
         for event in events:
+            if event["message_key"] == "outage_load" and not self.settings.has_meaningful_load(
+                event["load_watts"]
+            ):
+                await notification_repository.mark_notification_delivered(self.pool, event["id"])
+                continue
             if event["message_key"] == "statistics" and not self.settings.stats_auto_reports:
                 await notification_repository.mark_notification_delivered(self.pool, event["id"])
                 continue
@@ -53,13 +58,17 @@ class NotificationService:
                         event["forecast_text"] or "",
                     ),
                 }
-                if event["message_key"] == "warning_battery" and not event["load_watts"]:
+                meaningful_load = self.settings.has_meaningful_load(event["load_watts"])
+                if (
+                    event["message_key"] in {"warning_battery", "battery_discharging", "battery_low"}
+                    and not meaningful_load
+                ):
                     kwargs["load_line"] = ""
                 if (
                     event["message_key"]
                     in {"battery_discharging", "battery_low", "warning_battery", "outage_load"}
                     and event["level"] is not None
-                    and not (event["message_key"] == "warning_battery" and not event["load_watts"])
+                    and meaningful_load
                 ):
                     kwargs["runtime_line"] = locales.get_runtime_line(
                         language,

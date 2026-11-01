@@ -24,7 +24,7 @@ LOGGER_SERIAL=1234567890
 TELEGRAM_TOKEN=your_telegram_bot_token
 ```
 
-Battery forecasts use the inverter’s battery current, configured capacity in Ah, and shutdown SOC when available. `BATTERY_CAPACITY_KWH`, `BATTERY_CUTOFF_SOC`, and `BATTERY_INVERTER_EFFICIENCY` provide fallback runtime estimates; set capacity to the total nominal kWh of all batteries. These settings do not reconfigure the inverter.
+Battery forecasts use the inverter’s battery current, configured capacity in Ah, and shutdown SOC when available. `BATTERY_CAPACITY_KWH`, `BATTERY_CUTOFF_SOC`, and `BATTERY_INVERTER_EFFICIENCY` provide fallback runtime estimates; set capacity to the total nominal kWh of all batteries. These settings do not reconfigure the inverter. `MIN_LOAD_WATTS` (default `10`) filters small loads from outage notifications and runtime estimates.
 
 Report settings:
 

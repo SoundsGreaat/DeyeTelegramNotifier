@@ -18,7 +18,7 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         wait = SimpleNamespace(edit_text=AsyncMock())
         message = SimpleNamespace(chat=SimpleNamespace(id=123), answer=AsyncMock(return_value=wait))
         monitor = SimpleNamespace(
-            check=AsyncMock(return_value=InverterReading(230, True, 80, 1000)),
+            check=AsyncMock(return_value=InverterReading(230, True, 80, 1000, battery_current=20)),
             last_status_time=datetime.now(timezone.utc) - timedelta(hours=2),
             charging_estimate=lambda: ChargingEstimate(False, None),
         )
@@ -165,3 +165,58 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
                     self.assertIn("4046", text)
                     self.assertEqual(text.count("100%"), 1 if charge_seconds is not None else 0)
                     self.assertNotIn("\n\n", text)
+
+    async def test_full_or_idle_battery_never_shows_a_hypothetical_runtime(self):
+        cases = (
+            InverterReading(232.8, True, 100, 5, -2, 200, 20, battery_power_watts=-108),
+            InverterReading(232.8, True, 100, 500, -2, 200, 20, battery_power_watts=-108),
+            InverterReading(232.8, True, 100, 5, 0, 200, 20, battery_power_watts=0),
+            InverterReading(232.8, True, 100, 500, 0, 200, 20, battery_power_watts=0),
+            InverterReading(232.8, True, 80, 5, 1, 200, 20, battery_power_watts=50),
+        )
+        for reading in cases:
+            with self.subTest(reading=reading):
+                wait = SimpleNamespace(edit_text=AsyncMock())
+                message = SimpleNamespace(chat=SimpleNamespace(id=123), answer=AsyncMock(return_value=wait))
+                monitor = SimpleNamespace(
+                    check=AsyncMock(return_value=reading),
+                    last_status_time=datetime.now(timezone.utc),
+                    charging_estimate=lambda: ChargingEstimate(False, None),
+                )
+                with patch.object(chat_repository, "get_chat_language", AsyncMock(return_value="en")):
+                    await handlers.cmd_status(
+                        message,
+                        None,
+                        SimpleNamespace(next_event_for_state=lambda _: ("", "")),
+                        monitor,
+                        self.settings,
+                    )
+                text = wait.edit_text.await_args.args[0]
+                self.assertNotIn("Estimated runtime", text)
+                self.assertNotIn("Usable reserve", text)
+                self.assertNotIn("To 100%", text)
+                self.assertIn(f"Load: {reading.load_watts} W", text)
+                if reading.battery_power_watts < 0:
+                    self.assertIn("Charging: 108 W", text)
+
+    async def test_real_discharge_on_grid_still_shows_measured_runtime(self):
+        wait = SimpleNamespace(edit_text=AsyncMock())
+        message = SimpleNamespace(chat=SimpleNamespace(id=123), answer=AsyncMock(return_value=wait))
+        monitor = SimpleNamespace(
+            check=AsyncMock(
+                return_value=InverterReading(230, True, 80, 500, 10, 200, 20, battery_power_watts=500)
+            ),
+            last_status_time=datetime.now(timezone.utc),
+            charging_estimate=lambda: ChargingEstimate(False, None),
+        )
+        with patch.object(chat_repository, "get_chat_language", AsyncMock(return_value="en")):
+            await handlers.cmd_status(
+                message,
+                None,
+                SimpleNamespace(next_event_for_state=lambda _: ("", "")),
+                monitor,
+                self.settings,
+            )
+        text = wait.edit_text.await_args.args[0]
+        self.assertIn("Estimated runtime to 20%: 12h", text)
+        self.assertNotIn("Charging:", text)

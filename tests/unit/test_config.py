@@ -53,3 +53,23 @@ with patch('dotenv.load_dotenv', side_effect=AssertionError('dotenv read on impo
         with patch.dict(os.environ, {"STATS_REPORT_HOUR": "24"}):
             with self.assertRaisesRegex(ValueError, "STATS_REPORT_HOUR"):
                 Settings.from_env()
+
+    def test_min_load_defaults_to_ten_and_uses_an_inclusive_configured_threshold(self):
+        with patch.dict(os.environ):
+            os.environ.pop("MIN_LOAD_WATTS", None)
+            settings = Settings.from_env()
+        self.assertEqual(settings.min_load_watts, 10)
+        for watts in (None, 0, 1, 5, 9):
+            self.assertFalse(settings.has_meaningful_load(watts))
+        self.assertTrue(settings.has_meaningful_load(10))
+        with patch.dict(os.environ, {"MIN_LOAD_WATTS": "25"}):
+            settings = Settings.from_env()
+        self.assertFalse(settings.has_meaningful_load(24))
+        self.assertTrue(settings.has_meaningful_load(25))
+        self.assertTrue(settings.has_meaningful_load(26))
+
+    def test_invalid_minimum_load_is_rejected(self):
+        for value in ("-1", "nan", "inf", "invalid"):
+            with self.subTest(value=value), patch.dict(os.environ, {"MIN_LOAD_WATTS": value}):
+                with self.assertRaises(ValueError):
+                    Settings.from_env()

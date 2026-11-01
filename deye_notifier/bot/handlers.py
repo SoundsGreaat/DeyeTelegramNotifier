@@ -96,6 +96,12 @@ async def cmd_status(
     forecast_action, forecast_text = schedule_provider.next_event_for_state(is_online)
     forecast_line = locales.get_forecast_line(user_lang, forecast_action, forecast_text)
     charge_estimate = monitor.charging_estimate()
+    is_charging = snapshot.is_charging or charge_estimate.is_charging
+    show_runtime = (
+        not is_charging
+        and settings.has_meaningful_load(load_watts)
+        and (not is_online or snapshot.is_discharging)
+    )
 
     text = locales.get_message(
         user_lang,
@@ -119,11 +125,11 @@ async def cmd_status(
             settings.battery_inverter_efficiency,
             runtime_seconds=snapshot.runtime_seconds(settings),
         )
-        if not charge_estimate.is_charging
+        if show_runtime
         else "",
         charge_power_line=locales.get_charge_power_line(user_lang, snapshot.charge_power_watts),
         charge_time_line=locales.get_charge_time_line(user_lang, charge_estimate.seconds_remaining)
-        if charge_estimate.is_charging
+        if is_charging and battery_soc < 100
         else "",
         forecast_line=forecast_line,
     )

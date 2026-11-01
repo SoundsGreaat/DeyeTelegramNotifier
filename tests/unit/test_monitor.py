@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -309,3 +310,46 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         monitor.broadcast.assert_awaited_once()
         self.assertEqual(monitor.broadcast.await_args.args[0], "battery_discharging")
         self.assertEqual(monitor.broadcast.await_args.kwargs["load"], 500)
+
+    async def test_configured_minimum_controls_initial_outage_and_delayed_load(self):
+        for minimum, initial, settled, expected in (
+            (10, 5, 9, False),
+            (10, 5, 10, True),
+            (30, 15, 29, False),
+            (30, 15, 30, True),
+        ):
+            with self.subTest(minimum=minimum, initial=initial, settled=settled):
+                monitor = self.outage_monitor(
+                    [InverterReading(220, False, 70, initial), InverterReading(0, False, 70, settled)]
+                )
+                monitor.settings = replace(self.settings, min_load_watts=minimum)
+                with (
+                    patch.object(telemetry, "record_sample", AsyncMock()),
+                    patch.object(state_repository, "record_transition", AsyncMock()),
+                    patch("deye_notifier.inverter.monitor.asyncio.sleep", AsyncMock()) as delay,
+                ):
+                    await monitor.check()
+                    await monitor._load_followup_task
+                delay.assert_awaited_once_with(5)
+                self.assertEqual(monitor.broadcast.await_count, int(expected))
+                if expected:
+                    self.assertEqual(monitor.broadcast.await_args.args[0], "outage_load")
+                    self.assertEqual(monitor.broadcast.await_args.kwargs["load"], settled)
+        monitor = self.outage_monitor([InverterReading(0, False, 70, 10)])
+        with (
+            patch.object(telemetry, "record_sample", AsyncMock()),
+            patch.object(state_repository, "record_transition", AsyncMock()),
+        ):
+            await monitor.check()
+        self.assertIsNone(monitor._load_followup_task)
+
+    async def test_fully_charged_battery_still_recognizes_net_charging_without_zero_eta(self):
+        monitor = self.outage_monitor(
+            [InverterReading(230, True, 100, 5, -2, 200, 20, battery_power_watts=-108)]
+        )
+        with patch.object(telemetry, "record_sample", AsyncMock()):
+            await monitor.check()
+        estimate = monitor.charging_estimate()
+        self.assertTrue(estimate.is_charging)
+        self.assertIsNone(estimate.seconds_remaining)
+        self.assertIsNone(monitor.latest_reading.runtime_seconds(self.settings))

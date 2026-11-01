@@ -28,6 +28,18 @@ class InverterReading:
     battery_power_watts: int | None = None
 
     @property
+    def is_charging(self):
+        if self.battery_power_watts is not None:
+            return self.battery_power_watts < 0
+        return self.battery_current is not None and self.battery_current < -0.1
+
+    @property
+    def is_discharging(self):
+        if self.battery_power_watts is not None:
+            return self.battery_power_watts > 0
+        return self.battery_current is not None and self.battery_current > 0.1
+
+    @property
     def charge_power_watts(self):
         # Deye reports negative DC power while charging.
         power = self.battery_power_watts
@@ -53,7 +65,7 @@ class InverterReading:
         return abs(delta) / 100 * capacity / abs(current) * 3600
 
     def runtime_seconds(self, settings):
-        if self.battery_current is None or self.battery_current <= 0:
+        if not self.is_discharging:
             return None
         return self.battery_seconds(min(self.battery_soc, self.cutoff_soc(settings)))
 

@@ -204,3 +204,46 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
             self.assertIn("70%", text)
             self.assertIn(locales.format_duration(1331, language), text)
             self.assertIn("01.11.2026 20:00", text)
+
+    async def test_minimum_load_filters_small_outage_updates_and_runtime_lines(self):
+        for key, watts, minimum, show in (
+            ("warning_battery", 5, 10, False),
+            ("warning_battery", 10, 10, True),
+            ("battery_discharging", 5, 10, False),
+            ("outage_load", 5, 10, False),
+            ("warning_battery", 15, 20, False),
+            ("outage_load", 20, 20, True),
+        ):
+            with self.subTest(key=key, watts=watts, minimum=minimum):
+                self.bot.send_message.reset_mock()
+                event = dict(
+                    id=1,
+                    message_key=key,
+                    voltage=0,
+                    load_watts=watts,
+                    duration="1h",
+                    level=70,
+                    threshold=None,
+                    forecast_action="",
+                    forecast_text="",
+                    report_payload=None,
+                    runtime_eta_seconds=36000,
+                    battery_cutoff_soc=20,
+                )
+                with (
+                    patch.object(
+                        notification_repository, "get_pending_notifications", AsyncMock(return_value=[event])
+                    ),
+                    patch.object(chat_repository, "get_chats", AsyncMock(return_value=[(123, "en")])),
+                    patch.object(notification_repository, "mark_notification_delivered", AsyncMock()) as mark,
+                ):
+                    await NotificationService(
+                        None, self.bot, replace(self.settings, min_load_watts=minimum)
+                    ).deliver_pending()
+                mark.assert_awaited_once_with(None, 1)
+                if key == "outage_load" and not show:
+                    self.bot.send_message.assert_not_awaited()
+                    continue
+                text = self.bot.send_message.await_args.args[1]
+                self.assertEqual(f"Load: {watts} W" in text, show)
+                self.assertEqual("Estimated runtime" in text, show)
