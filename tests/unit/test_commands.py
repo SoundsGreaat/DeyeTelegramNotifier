@@ -56,7 +56,7 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
             )
         text = wait.edit_text.await_args.args[0]
         self.assertIn("До 100%: приблизно 30хв", text)
-        self.assertIn("5г 24хв", text)
+        self.assertNotIn("5г 24хв", text)
 
     def message(self):
         return SimpleNamespace(
@@ -124,3 +124,33 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         self.assertIn("Usable reserve: 6.00 kWh", result)
         self.assertIn("Offline", result)
         self.assertNotIn("set BATTERY_CAPACITY_KWH", result)
+
+    async def test_charging_status_omits_runtime_for_zero_or_positive_load_in_every_language(self):
+        for language in locales.LANGUAGES:
+            for load, charge_seconds in ((0, 1800), (1000, 1800), (0, None)):
+                with self.subTest(language=language, load=load, charge_seconds=charge_seconds):
+                    wait = SimpleNamespace(edit_text=AsyncMock())
+                    message = SimpleNamespace(
+                        chat=SimpleNamespace(id=123), answer=AsyncMock(return_value=wait)
+                    )
+                    monitor = SimpleNamespace(
+                        check=AsyncMock(return_value=InverterReading(230, True, 80, load, -80, 200, 20)),
+                        last_status_time=datetime.now(timezone.utc),
+                        charging_estimate=lambda: ChargingEstimate(True, charge_seconds),
+                    )
+                    with (
+                        patch.object(chat_repository, "get_chat_language", AsyncMock(return_value=language)),
+                        patch.object(locales, "get_runtime_line") as runtime,
+                    ):
+                        await handlers.cmd_status(
+                            message,
+                            None,
+                            SimpleNamespace(next_event_for_state=lambda _: ("", "")),
+                            monitor,
+                            self.settings,
+                        )
+                    runtime.assert_not_called()
+                    text = wait.edit_text.await_args.args[0]
+                    self.assertIn("80%", text)
+                    self.assertEqual(text.count("100%"), 1 if charge_seconds is not None else 0)
+                    self.assertNotIn("\n\n", text)

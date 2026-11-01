@@ -25,7 +25,6 @@ MESSAGES = {
         "stats_failed": "❌ Could not build the electricity report.",
         "stats_usage": "Usage: /stats [day|week|month] (or /stats_day, /stats_week, /stats_month)",
         "stats_empty": "📭 Not enough data for this period yet.",
-        "duration_unknown": "Duration: unknown",
     },
     "uk": {
         "start": "✅ Сповіщення про мережу та батарею ввімкнено.\n/status — стан; /stats day, /stats week або /stats month — звіти за запитом; /lang — мова.\nАвтозвіти потребують окремої підписки /stats_auto_on; /stats_auto_off — вимкнути.",
@@ -48,7 +47,6 @@ MESSAGES = {
         "stats_failed": "❌ Не вдалося сформувати статистику.",
         "stats_usage": "Використання: /stats [day|week|month] (або /stats_day, /stats_week, /stats_month)",
         "stats_empty": "📭 Недостатньо даних за цей період.",
-        "duration_unknown": "Тривалість: невідома",
     },
     "es": {
         "start": "✅ Avisos de red y batería activados.\n/status — estado; /stats day, /stats week o /stats month — informes a petición; /lang — idioma.\nLos informes automáticos requieren /stats_auto_on; /stats_auto_off los desactiva.",
@@ -71,7 +69,6 @@ MESSAGES = {
         "stats_failed": "❌ No se pudo crear el informe eléctrico.",
         "stats_usage": "Uso: /stats [day|week|month] (o /stats_day, /stats_week, /stats_month)",
         "stats_empty": "📭 Aún no hay suficientes datos para este período.",
-        "duration_unknown": "Duración: desconocida",
     },
     "de": {
         "start": "✅ Netz- und Batteriemeldungen aktiviert.\n/status — Zustand; /stats day, /stats week oder /stats month — Berichte auf Anfrage; /lang — Sprache.\nAutomatische Berichte separat mit /stats_auto_on aktivieren; /stats_auto_off — deaktivieren.",
@@ -94,7 +91,6 @@ MESSAGES = {
         "stats_failed": "❌ Strombericht konnte nicht erstellt werden.",
         "stats_usage": "Verwendung: /stats [day|week|month] (oder /stats_day, /stats_week, /stats_month)",
         "stats_empty": "📭 Noch nicht genug Daten für diesen Zeitraum.",
-        "duration_unknown": "Dauer: unbekannt",
     },
 }
 
@@ -167,7 +163,7 @@ def format_duration(seconds, lang_code="en"):
 
 def get_state_duration_line(lang_code, is_grid_online, seconds):
     if seconds is None:
-        return f"\n{get_message(lang_code, 'duration_unknown')}"
+        return ""
     labels = {
         "en": ("\n💡 Grid available: {duration}", "\n🕯 Grid unavailable: {duration}"),
         "uk": ("\n💡 Світло є вже: {duration}", "\n🕯 Світла немає вже: {duration}"),
@@ -194,29 +190,21 @@ def get_runtime_line(
         "en": (
             "\n⏱ Estimated runtime to {cutoff}%: {duration}",
             "Usable reserve: {energy:.2f} kWh",
-            "\n⏱ Runtime estimate: set BATTERY_CAPACITY_KWH",
-            "\n⏱ Runtime estimate: unavailable (load is zero)",
         ),
         "uk": (
             "\n⏱ Орієнтовний час до {cutoff}%: {duration}",
             "Доступний запас: {energy:.2f} кВт·год",
-            "\n⏱ Оцінка часу: вкажіть BATTERY_CAPACITY_KWH",
-            "\n⏱ Оцінка часу: недоступна (навантаження нульове)",
         ),
         "es": (
             "\n⏱ Autonomía estimada hasta {cutoff}%: {duration}",
             "Reserva utilizable: {energy:.2f} kWh",
-            "\n⏱ Autonomía: configure BATTERY_CAPACITY_KWH",
-            "\n⏱ Autonomía: no disponible (carga cero)",
         ),
         "de": (
             "\n⏱ Geschätzte Laufzeit bis {cutoff}%: {duration}",
             "Nutzbare Reserve: {energy:.2f} kWh",
-            "\n⏱ Laufzeit: BATTERY_CAPACITY_KWH konfigurieren",
-            "\n⏱ Laufzeit: nicht verfügbar (keine Last)",
         ),
     }
-    head, energy_label, unconfigured, zero = text.get(lang_code, text["en"])
+    head, energy_label = text.get(lang_code, text["en"])
     try:
         soc = float(battery_soc)
         load = float(load_watts)
@@ -224,7 +212,7 @@ def get_runtime_line(
         cutoff = float(cutoff_soc)
         eta = max(0.0, float(efficiency))
     except (TypeError, ValueError):
-        return unconfigured
+        return ""
     if runtime_seconds is not None:
         cutoff_text = int(cutoff) if cutoff.is_integer() else cutoff
         line = head.format(cutoff=cutoff_text, duration=format_duration(runtime_seconds, lang_code))
@@ -235,9 +223,9 @@ def get_runtime_line(
         usable = runtime_seconds * load / 3_600_000
         return line + "\n" + energy_label.format(energy=usable)
     if capacity <= 0:
-        return unconfigured
+        return ""
     if load <= 0:
-        return zero
+        return ""
     usable = max(0.0, soc - cutoff) / 100.0 * capacity * eta
     cutoff_text = int(cutoff) if cutoff.is_integer() else cutoff
     duration = format_duration(usable / (load / 1000.0) * 3600, lang_code)
@@ -247,14 +235,14 @@ def get_runtime_line(
 
 def get_charge_time_line(lang_code, seconds_remaining):
     labels = {
-        "en": ("\n⏱ To 100%: about {duration}", "\n⏱ To 100%: not enough data yet"),
-        "uk": ("\n⏱ До 100%: приблизно {duration}", "\n⏱ До 100%: недостатньо даних"),
-        "es": ("\n⏱ Hasta el 100%: aprox. {duration}", "\n⏱ Hasta el 100%: aún sin datos suficientes"),
-        "de": ("\n⏱ Bis 100%: ca. {duration}", "\n⏱ Bis 100%: noch nicht genug Daten"),
+        "en": "\n⏱ To 100%: about {duration}",
+        "uk": "\n⏱ До 100%: приблизно {duration}",
+        "es": "\n⏱ Hasta el 100%: aprox. {duration}",
+        "de": "\n⏱ Bis 100%: ca. {duration}",
     }
-    estimate, unknown = labels.get(lang_code, labels["en"])
+    estimate = labels.get(lang_code, labels["en"])
     if seconds_remaining is None or not math.isfinite(seconds_remaining) or seconds_remaining < 0:
-        return unknown
+        return ""
     rounded = max(60, round(seconds_remaining / 60) * 60) if seconds_remaining > 0 else 0
     return estimate.format(duration=format_duration(rounded, lang_code))
 
@@ -379,13 +367,21 @@ def format_statistics(lang_code, period, start, end, stats):
     unknown_share = max(0, 100 - online_share - offline_share)
     avg_text = f"{float(avg):.0f} {labels['power_unit']}" if avg is not None else "—"
     peak_text = f"{int(peak)} {labels['power_unit']}" if peak is not None else "—"
+    unknown_line = (
+        f"⚪ {labels['unknown']}: {_hours(unknown_seconds)} {labels['time_unit']} ({unknown_share}%)\n"
+        if unknown_seconds > 0
+        else ""
+    )
+    outages = int(stats.get("outages", 0) or 0)
+    outage_line = f"🔌 {labels['outages']}: {outages}"
+    if float(stats.get("longest_outage_seconds", 0) or 0) > 0:
+        outage_line += f" · {labels['longest']}: {longest}"
     return (
         f"📈 <b>{title}</b>\n🗓 {interval}\n\n"
         f"⚡ <b>{labels['consumption']}:</b> {float(stats.get('energy_kwh', 0) or 0):.2f} {labels['energy_unit']}\n"
         f"📊 {labels['avg']}: {avg_text} · {labels['peak']}: {peak_text}\n"
         f"🟢 {labels['online']}: {_hours(online_seconds)} {labels['time_unit']} ({online_share}%)\n"
         f"🔴 {labels['offline']}: {_hours(offline_seconds)} {labels['time_unit']} ({offline_share}%)\n"
-        f"⚪ {labels['unknown']}: {_hours(unknown_seconds)} {labels['time_unit']} ({unknown_share}%)\n"
-        f"🔌 {labels['outages']}: {int(stats.get('outages', 0) or 0)} · {labels['longest']}: {longest}\n"
+        f"{unknown_line}{outage_line}\n"
         f"🔋 {labels['soc']}: {soc}\n📡 {labels['coverage']}: {float(stats.get('coverage_percent', 0) or 0):.0f}%"
     )

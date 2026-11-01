@@ -18,8 +18,8 @@ class FormattingTests(IsolatedTestConfig, unittest.TestCase):
             self.assertIn(locales.format_duration(5.4 * 3600, language), line)
             self.assertIn("5.40", line)
             self.assertIn("0", locales.get_runtime_line(language, 15, 1000, 10, 20, 0.9))
-            self.assertIn("BATTERY_CAPACITY_KWH", locales.get_runtime_line(language, 80, 1000, 0, 20, 0.9))
-            self.assertNotIn("inf", locales.get_runtime_line(language, 80, 0, 10, 20, 0.9))
+            self.assertEqual(locales.get_runtime_line(language, 80, 1000, 0, 20, 0.9), "")
+            self.assertEqual(locales.get_runtime_line(language, 80, 0, 10, 20, 0.9), "")
 
     def test_reports_render_in_every_language(self):
         start = datetime(2026, 11, 1, tzinfo=timezone.utc)
@@ -51,7 +51,7 @@ class FormattingTests(IsolatedTestConfig, unittest.TestCase):
             )
             report = locales.format_statistics("en", "day", start, end, stats)
             self.assertIn(f"Grid available: {expected_hours:.1f} h (100%)", report)
-            self.assertIn("Unknown gaps: 0.0 h (0%)", report)
+            self.assertNotIn("Unknown gaps:", report)
 
 
 class MessageCopyTests(IsolatedTestConfig, unittest.TestCase):
@@ -60,7 +60,7 @@ class MessageCopyTests(IsolatedTestConfig, unittest.TestCase):
             known = locales.get_charge_time_line(language, 1800)
             unknown = locales.get_charge_time_line(language, None)
             self.assertIn(locales.format_duration(1800, language), known)
-            self.assertIn("100%", unknown)
+            self.assertEqual(unknown, "")
             self.assertNotEqual(known, unknown)
             self.assertNotIn("(", known)
 
@@ -93,6 +93,42 @@ class MessageCopyTests(IsolatedTestConfig, unittest.TestCase):
             locales.get_forecast_line("ru", "turn_on", "18:00"),
             locales.get_forecast_line("en", "turn_on", "18:00"),
         )
+
+    def test_optional_unavailable_estimates_and_duration_are_silent_in_all_languages(self):
+        for language in locales.LANGUAGES:
+            for seconds in (None, -1, float("nan"), float("inf")):
+                self.assertEqual(locales.get_charge_time_line(language, seconds), "")
+            self.assertEqual(locales.get_state_duration_line(language, True, None), "")
+            self.assertEqual(locales.get_runtime_line(language, None, 1000, 10, 20), "")
+
+    def test_reports_hide_empty_decorations_but_keep_real_gaps_and_outages(self):
+        start = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        for language in locales.LANGUAGES:
+            stats = make_stats()
+            stats.update(
+                online_seconds=7200,
+                offline_seconds=0,
+                unknown_seconds=0,
+                coverage_percent=100,
+                outages=0,
+                longest_outage_seconds=0,
+            )
+            report = locales.format_statistics(language, "day", start, start + timedelta(hours=2), stats)
+            self.assertNotIn("⚪", report)
+            outage_line = next(line for line in report.splitlines() if line.startswith("🔌"))
+            self.assertTrue(outage_line.endswith(": 0"))
+            self.assertNotIn(" · ", outage_line)
+            stats.update(
+                online_seconds=3600,
+                offline_seconds=1800,
+                unknown_seconds=1800,
+                coverage_percent=75,
+                outages=1,
+                longest_outage_seconds=1800,
+            )
+            report = locales.format_statistics(language, "day", start, start + timedelta(hours=2), stats)
+            self.assertIn("⚪", report)
+            self.assertIn(locales.format_duration(1800, language), report)
 
 
 class LanguageCompatibilityTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):

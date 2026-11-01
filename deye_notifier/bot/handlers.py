@@ -117,7 +117,9 @@ async def cmd_status(
             snapshot.cutoff_soc(settings),
             settings.battery_inverter_efficiency,
             runtime_seconds=snapshot.runtime_seconds(settings),
-        ),
+        )
+        if not charge_estimate.is_charging
+        else "",
         charge_time_line=locales.get_charge_time_line(user_lang, charge_estimate.seconds_remaining)
         if charge_estimate.is_charging
         else "",
