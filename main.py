@@ -2,19 +2,23 @@ import os
 import asyncio
 import json
 import logging
+import math
 import sys
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import asyncpg
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from pysolarmanv5 import PySolarmanV5
 from dotenv import load_dotenv
 import locales
+import energy_stats
+from db_migrations import prepare_database
 
 load_dotenv()
 
@@ -29,10 +33,29 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '10'))
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 
+
+def env_number(name, default, minimum, maximum):
+    value = float(os.getenv(name, str(default)))
+    if not math.isfinite(value) or not minimum <= value <= maximum:
+        raise ValueError(f'{name} must be between {minimum} and {maximum}')
+    return value
+
+
+BATTERY_CAPACITY_KWH = env_number('BATTERY_CAPACITY_KWH', 0, 0, 100000)
+BATTERY_CUTOFF_SOC = env_number('BATTERY_CUTOFF_SOC', 20, 0, 100)
+BATTERY_INVERTER_EFFICIENCY = env_number('BATTERY_INVERTER_EFFICIENCY', 0.9, 0.01, 1)
+STATS_TIMEZONE = ZoneInfo(os.getenv('STATS_TIMEZONE', 'UTC'))
+STATS_REPORT_HOUR = int(os.getenv('STATS_REPORT_HOUR', '9'))
+if not 0 <= STATS_REPORT_HOUR <= 23:
+    raise ValueError('STATS_REPORT_HOUR must be an integer between 0 and 23')
+STATS_AUTO_REPORTS = os.getenv('STATS_AUTO_REPORTS', 'true').strip().lower() in {'true', '1', 'yes'}
+STATS_MAX_GAP_SECONDS = max(60, CHECK_INTERVAL * 3)
+
 PG_HOST = os.getenv('POSTGRES_HOST', 'postgres')
 PG_USER = os.getenv('POSTGRES_USER', 'postgres')
 PG_PASS = os.getenv('POSTGRES_PASSWORD', 'postgres')
 PG_DB = os.getenv('POSTGRES_DB', 'deye_bot')
+PG_PORT = int(os.getenv('POSTGRES_PORT', '5432'))
 
 # Optional schedule forecasts. Leave SCHEDULE_PROVIDER empty to keep the bot
 # fully provider-agnostic and disable address lookups.
@@ -66,6 +89,40 @@ bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
 
+async def register_bot_commands():
+    commands = [
+        types.BotCommand(command='start', description='Enable power and battery notifications'),
+        types.BotCommand(command='stop', description='Disable all notifications and automatic reports'),
+        types.BotCommand(command='status', description='Current status and estimated battery runtime'),
+        types.BotCommand(command='stats', description="Today's electricity statistics"),
+        types.BotCommand(command='stats_day', description="Today's electricity statistics"),
+        types.BotCommand(command='stats_week', description="This week's electricity statistics"),
+        types.BotCommand(command='stats_month', description="This month's electricity statistics"),
+        types.BotCommand(command='stats_auto_on', description='Enable automatic daily, weekly and monthly reports'),
+        types.BotCommand(command='stats_auto_off', description='Disable automatic reports'),
+        types.BotCommand(command='lang', description='Choose the language of bot messages'),
+    ]
+    # The fallback serves other Telegram languages. Replace the supported
+    # language overrides as well so an old localized menu cannot hide updates.
+    for attempt in range(3):
+        try:
+            for language in ('', *locales.LANGUAGES):
+                await bot.set_my_commands(
+                    commands, scope=types.BotCommandScopeDefault(), language_code=language,
+                    request_timeout=10,
+                )
+            # Retired language menus must fall back to the English default,
+            # including after future changes to the command list.
+            await bot.delete_my_commands(scope=types.BotCommandScopeDefault(), language_code='ru', request_timeout=10)
+            logger.info('English command menu registered')
+            return
+        except TelegramAPIError as error:
+            logger.warning('Command menu registration failed (%s), attempt %s/3', type(error).__name__, attempt + 1)
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+    logger.warning('Could not register command menu; continuing bot startup')
+
+
 async def get_db_pool():
     for i in range(10):
         try:
@@ -74,6 +131,7 @@ async def get_db_pool():
                 password=PG_PASS,
                 database=PG_DB,
                 host=PG_HOST,
+                port=PG_PORT,
                 min_size=1,
                 max_size=5,
                 max_inactive_connection_lifetime=300,
@@ -101,62 +159,18 @@ async def db_retry(pool, operation, attempts=3):
             await asyncio.sleep(1 + attempt)
 
 
-async def init_db(pool):
-    async with pool.acquire() as conn:
-        await conn.execute('''
-                           CREATE TABLE IF NOT EXISTS chats
-                           (
-                               chat_id    BIGINT PRIMARY KEY,
-                               created_at TIMESTAMP  DEFAULT CURRENT_TIMESTAMP,
-                               language   VARCHAR(5) DEFAULT 'en'
-                           )
-                           ''')
-        try:
-            await conn.execute('ALTER TABLE chats ADD COLUMN IF NOT EXISTS language VARCHAR(5) DEFAULT \'en\'')
-        except Exception:
-            pass
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS monitor_state (
-                id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id = TRUE),
-                is_grid_online BOOLEAN NOT NULL,
-                last_status_time TIMESTAMP NOT NULL
-            )
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS notification_queue (
-                id BIGSERIAL PRIMARY KEY,
-                message_key VARCHAR(64) NOT NULL,
-                voltage DOUBLE PRECISION,
-                load_watts INTEGER DEFAULT 0,
-                duration VARCHAR(64) DEFAULT '',
-                level INTEGER,
-                forecast_action VARCHAR(16),
-                forecast_text TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                delivered_at TIMESTAMP NULL
-            )
-        ''')
-        await conn.execute('ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS forecast_action VARCHAR(16)')
-        await conn.execute('ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS forecast_text TEXT')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS schedule_cache (
-                cache_key VARCHAR(128) PRIMARY KEY,
-                payload JSONB NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-
 async def add_chat(pool, chat_id, language='en'):
+    language = locales.normalize_language(language)
     async with pool.acquire() as conn:
         await conn.execute('''
-                           INSERT INTO chats (chat_id, language)
-                           VALUES ($1, $2)
-                           ON CONFLICT (chat_id) DO UPDATE SET language = $2
+                           INSERT INTO chats (chat_id, language, notifications_enabled)
+                           VALUES ($1, $2, TRUE)
+                           ON CONFLICT (chat_id) DO UPDATE SET language = $2, notifications_enabled = TRUE
                            ''', chat_id, language)
 
 
 async def set_chat_language(pool, chat_id, language):
+    language = locales.normalize_language(language)
     async with pool.acquire() as conn:
         await conn.execute('UPDATE chats SET language = $1 WHERE chat_id = $2', language, chat_id)
 
@@ -166,11 +180,35 @@ async def remove_chat(pool, chat_id):
         await conn.execute('DELETE FROM chats WHERE chat_id = $1', chat_id)
 
 
-async def get_chats(pool):
+async def unsubscribe_chat(pool, chat_id):
     async def operation():
         async with pool.acquire() as conn:
-            rows = await conn.fetch('SELECT chat_id, language FROM chats')
-            return [(row['chat_id'], row['language']) for row in rows]
+            await conn.execute('''
+                UPDATE chats SET notifications_enabled = FALSE, stats_enabled = FALSE WHERE chat_id = $1
+            ''', chat_id)
+    await db_retry(pool, operation)
+
+
+async def set_stats_subscription(pool, chat_id, enabled, language='en'):
+    language = locales.normalize_language(language)
+    async def operation():
+        async with pool.acquire() as conn:
+            return await conn.fetchval('''
+                INSERT INTO chats (chat_id, language, notifications_enabled, stats_enabled)
+                VALUES ($1, $2, FALSE, $3)
+                ON CONFLICT (chat_id) DO UPDATE SET stats_enabled = EXCLUDED.stats_enabled
+                RETURNING language
+            ''', chat_id, language, enabled)
+    return locales.normalize_language(await db_retry(pool, operation))
+
+
+async def get_chats(pool, *, stats_only=False):
+    async def operation():
+        async with pool.acquire() as conn:
+            query = ('SELECT chat_id, language FROM chats WHERE stats_enabled' if stats_only else
+                     'SELECT chat_id, language FROM chats WHERE notifications_enabled')
+            rows = await conn.fetch(query)
+            return [(row['chat_id'], locales.normalize_language(row['language'])) for row in rows]
     return await db_retry(pool, operation)
 
 
@@ -219,14 +257,14 @@ async def record_transition(pool, is_grid_online, status_time, voltage, load, du
 
 
 async def enqueue_notification(pool, message_key, voltage=None, load=0, duration='', level=None,
-                               forecast_action='', forecast_text=''):
+                               forecast_action='', forecast_text='', threshold=None):
     async def operation():
         async with pool.acquire() as conn:
             await conn.execute('''
                 INSERT INTO notification_queue
-                    (message_key, voltage, load_watts, duration, level, forecast_action, forecast_text)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ''', message_key, voltage, load, duration, level, forecast_action, forecast_text)
+                    (message_key, voltage, load_watts, duration, level, forecast_action, forecast_text, threshold)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ''', message_key, voltage, load, duration, level, forecast_action, forecast_text, threshold)
     await db_retry(pool, operation)
 
 
@@ -235,7 +273,7 @@ async def get_pending_notifications(pool):
         async with pool.acquire() as conn:
             return await conn.fetch('''
                 SELECT id, message_key, voltage, load_watts, duration, level,
-                       forecast_action, forecast_text
+                       forecast_action, forecast_text, threshold, report_payload
                 FROM notification_queue
                 WHERE delivered_at IS NULL
                 ORDER BY id
@@ -252,6 +290,63 @@ async def mark_notification_delivered(pool, event_id):
                 event_id,
             )
     await db_retry(pool, operation)
+
+
+async def query_statistics(pool, start, end):
+    return await db_retry(pool, lambda: energy_stats.get_statistics(
+        pool, start, end, STATS_MAX_GAP_SECONDS,
+    ))
+
+
+async def enqueue_completed_reports(pool, now=None):
+    """Queue each latest completed period once, including after a restart.
+
+    Subtracting the local report hour delays publication until that hour on the
+    first day following a period. Unique report keys make retries idempotent.
+    """
+    local_now = (now or datetime.now(timezone.utc)).astimezone(STATS_TIMEZONE)
+    eligible_time = local_now - timedelta(hours=STATS_REPORT_HOUR)
+    for period in ('day', 'week', 'month'):
+        start, end = energy_stats.report_period(period, eligible_time, STATS_TIMEZONE, completed=True)
+        report_key = f'{period}:{start.isoformat()}:{end.isoformat()}'
+
+        async def exists():
+            async with pool.acquire() as conn:
+                return await conn.fetchval(
+                    'SELECT EXISTS(SELECT 1 FROM notification_queue WHERE report_key = $1)', report_key,
+                )
+
+        if await db_retry(pool, exists):
+            continue
+        stats = await query_statistics(pool, start, end)
+        if stats['coverage_percent'] <= 0:
+            continue
+        payload = json.dumps({
+            'period': period, 'start': start.isoformat(), 'end': end.isoformat(), 'stats': stats,
+        })
+
+        async def insert():
+            async with pool.acquire() as conn:
+                await conn.execute('''
+                    INSERT INTO notification_queue (message_key, report_key, report_payload)
+                    VALUES ('statistics', $1, $2::jsonb)
+                    ON CONFLICT (report_key) WHERE report_key IS NOT NULL DO NOTHING
+                ''', report_key, payload)
+
+        await db_retry(pool, insert)
+
+
+async def statistics_loop(pool):
+    if not STATS_AUTO_REPORTS:
+        return
+    while True:
+        try:
+            await enqueue_completed_reports(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Could not queue statistics reports; will retry')
+        await asyncio.sleep(60)
 
 
 async def load_schedule_cache(pool, cache_key):
@@ -456,7 +551,7 @@ class YasnoScheduleProvider:
 async def get_chat_language(pool, chat_id):
     async with pool.acquire() as conn:
         val = await conn.fetchval('SELECT language FROM chats WHERE chat_id = $1', chat_id)
-        return val or 'en'
+        return locales.normalize_language(val)
 
 
 @dp.message(Command("start"))
@@ -468,9 +563,22 @@ async def cmd_start(message: types.Message, pool: asyncpg.Pool):
 
 @dp.message(Command("stop"))
 async def cmd_stop(message: types.Message, pool: asyncpg.Pool):
-    await remove_chat(pool, message.chat.id)
+    await unsubscribe_chat(pool, message.chat.id)
     user_lang = message.from_user.language_code if message.from_user.language_code in locales.LANGUAGES else 'en'
     await message.answer(locales.get_message(user_lang, "stop"))
+
+
+@dp.message(Command('stats_auto_on', 'stats_auto_off'))
+async def cmd_stats_auto(message: types.Message, pool: asyncpg.Pool, command: CommandObject):
+    user_lang = getattr(message.from_user, 'language_code', None)
+    if user_lang not in locales.LANGUAGES:
+        user_lang = 'en'
+    enabled = command.command == 'stats_auto_on'
+    language = await set_stats_subscription(pool, message.chat.id, enabled, user_lang)
+    text = locales.get_message(language, 'stats_auto_enabled' if enabled else 'stats_auto_disabled')
+    if enabled and not STATS_AUTO_REPORTS:
+        text += '\n' + locales.get_message(language, 'stats_auto_paused')
+    await message.answer(text)
 
 
 @dp.message(Command("lang", "language"))
@@ -487,6 +595,8 @@ async def cmd_lang(message: types.Message):
 @dp.callback_query(F.data.startswith("lang_"))
 async def callback_lang(callback: types.CallbackQuery, pool: asyncpg.Pool):
     lang_code = callback.data.split("_")[1]
+    if lang_code == 'ru':
+        lang_code = 'en'  # Accept old inline buttons without restoring the retired locale.
     if lang_code in locales.LANGUAGES:
         await set_chat_language(pool, callback.message.chat.id, lang_code)
         await callback.message.answer(locales.get_message(lang_code, "lang_set"))
@@ -496,33 +606,19 @@ async def callback_lang(callback: types.CallbackQuery, pool: asyncpg.Pool):
 
 
 @dp.message(Command("status"))
-async def cmd_status(message: types.Message, pool: asyncpg.Pool, schedule_provider: YasnoScheduleProvider):
+async def cmd_status(message: types.Message, pool: asyncpg.Pool, schedule_provider: YasnoScheduleProvider,
+                     monitor):
     user_lang = await get_chat_language(pool, message.chat.id)
     wait_msg = await message.answer("⏳")
-
-    def read_inv():
-        inv = None
-        try:
-            inv = PySolarmanV5(INVERTER_IP, LOGGER_SERIAL, socket_timeout=5, verbose=False)
-            data = inv.read_holding_registers(GRID_V_REG, 35)
-            return data[0] / 10.0, data[14], data[34], data[28]
-        except Exception as e:
-            logger.error(f"Manual check error: {e}")
-            return None, None, None, None
-        finally:
-            if inv:
-                try:
-                    inv.disconnect()
-                except:
-                    pass
-
-    loop = asyncio.get_running_loop()
-    grid_v, current_mode, battery_soc, load_watts = await loop.run_in_executor(None, read_inv)
-
-    if grid_v is None:
-        await wait_msg.edit_text("❌ Connection failed")
+    try:
+        snapshot = await monitor.check()
+    except Exception:
+        logger.exception('Manual status check failed')
+        snapshot = None
+    if snapshot is None:
+        await wait_msg.edit_text(locales.get_message(user_lang, 'connection_failed'))
         return
-
+    grid_v, current_mode, battery_soc, load_watts = snapshot
     is_online = (grid_v > VOLTAGE_THRESHOLD) and (current_mode != 300)
     grid_status_text = locales.get_message(user_lang, "online" if is_online else "offline")
     forecast_action, forecast_text = schedule_provider.next_event_for_state(is_online)
@@ -533,8 +629,34 @@ async def cmd_status(message: types.Message, pool: asyncpg.Pool, schedule_provid
                                voltage=grid_v,
                                battery=battery_soc,
                                load=load_watts,
+                               state_duration_line=locales.get_state_duration_line(
+                                   user_lang, is_online,
+                                   (datetime.now(timezone.utc) - monitor.last_status_time).total_seconds(),
+                               ),
+                               runtime_line=locales.get_runtime_line(
+                                   user_lang, battery_soc, load_watts, BATTERY_CAPACITY_KWH,
+                                   BATTERY_CUTOFF_SOC, BATTERY_INVERTER_EFFICIENCY,
+                               ),
                                forecast_line=forecast_line)
 
+    await wait_msg.edit_text(text, parse_mode=ParseMode.HTML)
+
+
+@dp.message(Command('stats', 'stats_day', 'stats_week', 'stats_month'))
+async def cmd_stats(message: types.Message, pool: asyncpg.Pool, command: CommandObject):
+    language = await get_chat_language(pool, message.chat.id)
+    period = command.command.removeprefix('stats_') if command.command != 'stats' else (command.args or 'day').strip().lower()
+    if period not in {'day', 'week', 'month'} or (command.command != 'stats' and command.args):
+        await message.answer(locales.get_message(language, 'stats_usage'))
+        return
+    wait_msg = await message.answer('⏳')
+    try:
+        start, end = energy_stats.report_period(period, datetime.now(timezone.utc), STATS_TIMEZONE)
+        stats = await query_statistics(pool, start, end)
+        text = locales.format_statistics(language, period, start, end, stats)
+    except Exception:
+        logger.exception('Statistics command failed')
+        text = locales.get_message(language, 'stats_failed')
     await wait_msg.edit_text(text, parse_mode=ParseMode.HTML)
 
 
@@ -545,7 +667,8 @@ class DeyeStatusMonitor:
         self.is_grid_online = None
         self.last_battery_soc = None
         self.running = True
-        self.last_status_time = datetime.now()
+        self.last_status_time = datetime.now(timezone.utc)
+        self.check_lock = asyncio.Lock()
 
     def format_duration(self, delta):
         total_seconds = int(delta.total_seconds())
@@ -555,6 +678,21 @@ class DeyeStatusMonitor:
             return f"{hours}h {minutes}m"
         return f"{minutes}m {seconds}s"
 
+    @staticmethod
+    def battery_events(previous, current):
+        """Describe every crossed 25% mark without alerting on the first read."""
+        if previous is None or current is None:
+            return []
+        if current > previous:
+            return [
+                ('battery_full' if threshold == 100 else 'battery_charging', threshold)
+                for threshold in (25, 50, 75, 100) if previous < threshold <= current
+            ]
+        return [
+            ('battery_low' if threshold == 25 else 'battery_discharging', threshold)
+            for threshold in (75, 50, 25) if current <= threshold < previous
+        ]
+
     async def broadcast(self, key, **kwargs):
         await enqueue_notification(
             self.pool,
@@ -563,6 +701,7 @@ class DeyeStatusMonitor:
             load=kwargs.get('load', 0),
             duration=kwargs.get('duration', ''),
             level=kwargs.get('level'),
+            threshold=kwargs.get('threshold'),
             forecast_text=kwargs.get('forecast_text', ''),
         )
 
@@ -572,13 +711,13 @@ class DeyeStatusMonitor:
         if not events:
             return
 
-        chats = await get_chats(self.pool)
-        if not chats:
-            for event in events:
-                await mark_notification_delivered(self.pool, event['id'])
-            return
-
         for event in events:
+            if event['message_key'] == 'statistics' and not STATS_AUTO_REPORTS:
+                await mark_notification_delivered(self.pool, event['id'])
+                continue
+            # Check preferences for each queued event, including events that
+            # were created before a user opted out or before this upgrade.
+            chats = await get_chats(self.pool, stats_only=event['message_key'] == 'statistics')
             all_sent = True
             for chat_id, language in chats:
                 kwargs = {
@@ -586,13 +725,23 @@ class DeyeStatusMonitor:
                     'load': event['load_watts'],
                     'duration': event['duration'],
                     'level': event['level'],
+                    'threshold': event['threshold'] if event['threshold'] is not None else event['level'],
                     'forecast_line': locales.get_forecast_line(
                         language,
                         event['forecast_action'] or '',
                         event['forecast_text'] or '',
                     ),
                 }
-                text = locales.get_message(language, event['message_key'], **kwargs)
+                if event['report_payload']:
+                    payload = event['report_payload']
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    text = locales.format_statistics(
+                        language, payload['period'], datetime.fromisoformat(payload['start']),
+                        datetime.fromisoformat(payload['end']), payload['stats'],
+                    )
+                else:
+                    text = locales.get_message(language, event['message_key'], **kwargs)
                 sent = False
                 for attempt in range(3):
                     try:
@@ -659,6 +808,11 @@ class DeyeStatusMonitor:
                     pass
 
     async def check(self):
+        # Manual status requests share the polling path and its state/history.
+        async with self.check_lock:
+            return await self._check()
+
+    async def _check(self):
         loop = asyncio.get_running_loop()
         try:
             grid_v, current_mode, battery_soc, load_watts = await loop.run_in_executor(None, self.read_inverter)
@@ -668,34 +822,22 @@ class DeyeStatusMonitor:
 
         if grid_v is None:
             return
-
-        if self.last_battery_soc is not None and battery_soc is not None:
-            if battery_soc == 100 and self.last_battery_soc < 100:
-                await self.broadcast("battery_full")
-            elif battery_soc <= 75 < self.last_battery_soc:
-                await self.broadcast("battery_discharging", level=battery_soc)
-            elif battery_soc <= 50 < self.last_battery_soc:
-                await self.broadcast("battery_discharging", level=battery_soc)
-            elif battery_soc <= 25 < self.last_battery_soc:
-                await self.broadcast("battery_low", level=battery_soc)
-
-        if battery_soc is not None:
-            self.last_battery_soc = battery_soc
-
+        if battery_soc is None or not 0 <= battery_soc <= 100 or load_watts is None or load_watts < 0:
+            logger.warning('Ignoring invalid inverter telemetry: SOC=%s load=%s', battery_soc, load_watts)
+            return
+        now = datetime.now(timezone.utc)
         currently_online = (grid_v > VOLTAGE_THRESHOLD) and (current_mode != 300)
 
         if self.is_grid_online is None:
             saved_state = await load_monitor_state(self.pool)
             if saved_state is None:
+                await save_initial_monitor_state(self.pool, currently_online, now)
                 self.is_grid_online = currently_online
-                self.last_battery_soc = battery_soc
-                self.last_status_time = datetime.now()
-                await save_initial_monitor_state(self.pool, currently_online, self.last_status_time)
+                self.last_status_time = now
             else:
                 self.is_grid_online = saved_state['is_grid_online']
                 self.last_status_time = saved_state['last_status_time']
                 if currently_online != self.is_grid_online:
-                    now = datetime.now()
                     duration = self.format_duration(now - self.last_status_time)
                     forecast_action, forecast_text = self.schedule_provider.next_event_for_state(currently_online)
                     await record_transition(
@@ -710,14 +852,10 @@ class DeyeStatusMonitor:
                     )
                     self.is_grid_online = currently_online
                     self.last_status_time = now
-            self.last_battery_soc = battery_soc
             status_label = "GRID" if currently_online else "BATTERY"
             logger.info(
                 f"Monitor started. Current mode: {status_label} ({current_mode}), Voltage: {grid_v}V, Battery: {battery_soc}%")
-            return
-
-        if currently_online != self.is_grid_online:
-            now = datetime.now()
+        elif currently_online != self.is_grid_online:
             duration = self.format_duration(now - self.last_status_time)
             forecast_action, forecast_text = self.schedule_provider.next_event_for_state(currently_online)
             await record_transition(
@@ -736,6 +874,17 @@ class DeyeStatusMonitor:
             status_text = "OK" if currently_online else "BATTERY"
             logger.debug(f"Mode: {current_mode}, Grid: {grid_v}V, Batt: {battery_soc}% | {status_text}")
 
+        await db_retry(self.pool, lambda: energy_stats.record_sample(
+            self.pool, now, currently_online, load_watts, battery_soc,
+        ))
+        events = self.battery_events(self.last_battery_soc, battery_soc)
+        # Several crossed milestones share the same current SOC. Report the
+        # latest one once, with full/low battery taking precedence on a jump.
+        for key, threshold in events[-1:]:
+            await self.broadcast(key, level=battery_soc, threshold=threshold)
+        self.last_battery_soc = battery_soc
+        return grid_v, current_mode, battery_soc, load_watts
+
     async def run(self):
         logger.info(f"Starting Deye Inverter Monitor for {INVERTER_IP}")
         while self.running:
@@ -750,22 +899,25 @@ class DeyeStatusMonitor:
 
 async def main():
     pool = await get_db_pool()
-    await init_db(pool)
-
-    schedule_provider = YasnoScheduleProvider(pool)
-    monitor = DeyeStatusMonitor(pool, schedule_provider)
-
-    monitor_task = asyncio.create_task(monitor.run())
-    delivery_task = asyncio.create_task(monitor.delivery_loop())
-    schedule_task = asyncio.create_task(schedule_provider.run())
-
     try:
-        await dp.start_polling(bot, pool=pool, schedule_provider=schedule_provider)
+        await prepare_database()
+        await register_bot_commands()
+        schedule_provider = YasnoScheduleProvider(pool)
+        monitor = DeyeStatusMonitor(pool, schedule_provider)
+        tasks = [
+            asyncio.create_task(monitor.run()),
+            asyncio.create_task(monitor.delivery_loop()),
+            asyncio.create_task(schedule_provider.run()),
+            asyncio.create_task(statistics_loop(pool)),
+        ]
+        try:
+            await dp.start_polling(bot, pool=pool, schedule_provider=schedule_provider, monitor=monitor)
+        finally:
+            monitor.running = False
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
     finally:
-        monitor.running = False
-        for task in (monitor_task, delivery_task, schedule_task):
-            task.cancel()
-        await asyncio.gather(monitor_task, delivery_task, schedule_task, return_exceptions=True)
         await pool.close()
 
 
