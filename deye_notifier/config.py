@@ -1,5 +1,6 @@
 """Application settings, loaded explicitly by entry points."""
 
+import logging
 import math
 import os
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+logger = logging.getLogger(__name__)
 
 
 def _number(name, default, minimum, maximum):
@@ -16,6 +18,14 @@ def _number(name, default, minimum, maximum):
     if not math.isfinite(value) or not minimum <= value <= maximum:
         raise ValueError(f"{name} must be between {minimum} and {maximum}")
     return value
+
+
+def _live_status_interval():
+    try:
+        return _number("LIVE_STATUS_INTERVAL", 60, 5, 3600)
+    except ValueError:
+        logger.warning("Invalid LIVE_STATUS_INTERVAL; using 60 seconds (expected 5..3600)")
+        return 60
 
 
 def _database_values():
@@ -93,7 +103,7 @@ class Settings:
             check_interval=int(os.getenv("CHECK_INTERVAL", "10")),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             min_load_watts=_number("MIN_LOAD_WATTS", 10, 0, 1000000),
-            live_status_interval=_number("LIVE_STATUS_INTERVAL", 60, 30, 3600),
+            live_status_interval=_live_status_interval(),
             battery_capacity_kwh=_number("BATTERY_CAPACITY_KWH", 0, 0, 100000),
             battery_cutoff_soc=_number("BATTERY_CUTOFF_SOC", 20, 0, 100),
             battery_inverter_efficiency=_number("BATTERY_INVERTER_EFFICIENCY", 0.9, 0.01, 1),

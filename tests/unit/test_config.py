@@ -74,9 +74,18 @@ with patch('dotenv.load_dotenv', side_effect=AssertionError('dotenv read on impo
                 with self.assertRaises(ValueError):
                     Settings.from_env()
 
-    def test_live_refresh_interval_defaults_and_rejects_excessive_frequency(self):
-        self.assertEqual(Settings.from_env().live_status_interval, 60)
-        for value in ("0", "10", "nan", "inf", "3601"):
+    def test_live_refresh_interval_accepts_five_seconds_and_keeps_default(self):
+        with patch.dict(os.environ):
+            os.environ.pop("LIVE_STATUS_INTERVAL", None)
+            self.assertEqual(Settings.from_env().live_status_interval, 60)
+        for value in ("5", "10", "30", "60", "3600"):
             with self.subTest(value=value), patch.dict(os.environ, {"LIVE_STATUS_INTERVAL": value}):
-                with self.assertRaises(ValueError):
-                    Settings.from_env()
+                self.assertEqual(Settings.from_env().live_status_interval, float(value))
+
+    def test_invalid_optional_live_interval_does_not_prevent_startup(self):
+        for value in ("0", "4", "-1", "nan", "inf", "3601", "", "invalid-private-value"):
+            with self.subTest(value=value), patch.dict(os.environ, {"LIVE_STATUS_INTERVAL": value}):
+                with self.assertLogs("deye_notifier.config", level="WARNING") as output:
+                    self.assertEqual(Settings.from_env().live_status_interval, 60)
+                self.assertIn("LIVE_STATUS_INTERVAL", output.output[0])
+                self.assertNotIn("invalid-private-value", output.output[0])
