@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, time, timedelta, timezone
-from numbers import Real
 from typing import Any, Iterable, Sequence
 from zoneinfo import ZoneInfo
 
+from deye_notifier.database import telemetry
 
 DEFAULT_MAX_GAP_SECONDS = 120.0
 
@@ -132,72 +132,6 @@ def _build_intervals(
     return intervals, max(0.0, total_seconds - valid_seconds)
 
 
-async def record_sample(
-    pool: Any,
-    observed_at: datetime,
-    is_grid_online: bool,
-    load_watts: int | float,
-    battery_soc: int | None,
-) -> None:
-    """Upsert one normalised inverter reading."""
-    observed_at = _utc(observed_at)
-    if not isinstance(is_grid_online, bool):
-        raise TypeError("is_grid_online must be bool")
-    if not isinstance(load_watts, Real) or load_watts < 0:
-        raise ValueError("load_watts must be a non-negative number")
-    load_value = int(round(load_watts))
-    if battery_soc is not None and (not isinstance(battery_soc, Real) or not 0 <= battery_soc <= 100):
-        raise ValueError("battery_soc must be between 0 and 100")
-    async with pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO telemetry_samples (observed_at, is_grid_online, load_watts, battery_soc)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (observed_at) DO UPDATE SET
-              is_grid_online = EXCLUDED.is_grid_online,
-              load_watts = EXCLUDED.load_watts,
-              battery_soc = EXCLUDED.battery_soc
-            """,
-            observed_at,
-            is_grid_online,
-            load_value,
-            None if battery_soc is None else int(round(battery_soc)),
-        )
-
-
-async def _fetch_samples(pool: Any, start: datetime, end: datetime) -> list[Any]:
-    async with pool.acquire() as conn:
-        return await conn.fetch(
-            """
-            WITH predecessor AS (
-                SELECT observed_at, is_grid_online, load_watts, battery_soc
-                FROM telemetry_samples
-                WHERE observed_at < $1
-                ORDER BY observed_at DESC
-                LIMIT 1
-            ), period AS (
-                SELECT observed_at, is_grid_online, load_watts, battery_soc
-                FROM telemetry_samples
-                WHERE observed_at >= $1 AND observed_at < $2
-            ), successor AS (
-                SELECT observed_at, is_grid_online, load_watts, battery_soc
-                FROM telemetry_samples
-                WHERE observed_at >= $2
-                ORDER BY observed_at ASC
-                LIMIT 1
-            )
-            SELECT observed_at, is_grid_online, load_watts, battery_soc FROM predecessor
-            UNION ALL
-            SELECT observed_at, is_grid_online, load_watts, battery_soc FROM period
-            UNION ALL
-            SELECT observed_at, is_grid_online, load_watts, battery_soc FROM successor
-            ORDER BY observed_at
-            """,
-            _utc(start),
-            _utc(end),
-        )
-
-
 async def get_statistics(
     pool: Any,
     start: datetime,
@@ -211,7 +145,7 @@ async def get_statistics(
     if max_gap_seconds <= 0:
         raise ValueError("max_gap_seconds must be positive")
 
-    rows = await _fetch_samples(pool, start, end)
+    rows = await telemetry.fetch_samples(pool, start, end)
     # A month can contain hundreds of thousands of samples.  Keep this CPU
     # work off the event loop used by aiogram and the delivery worker.
     result = await asyncio.to_thread(_calculate_statistics, rows, start, end, float(max_gap_seconds))
@@ -285,4 +219,3 @@ def _calculate_statistics(
         "min_soc": min(soc_values) if soc_values else None,
         "max_soc": max(soc_values) if soc_values else None,
     }
-

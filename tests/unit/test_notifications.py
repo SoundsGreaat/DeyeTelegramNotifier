@@ -1,0 +1,119 @@
+import json
+import unittest
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+from support import IsolatedTestConfig, make_stats
+
+from deye_notifier.database import chats as chat_repository
+from deye_notifier.database import notifications as notification_repository
+from deye_notifier.services.notifications import NotificationService
+
+
+class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        super().setUp()
+        self.bot = SimpleNamespace(send_message=AsyncMock())
+
+    async def test_report_delivery_formats_saved_payload_for_chat_language(self):
+        monitor = NotificationService(None, self.bot, self.settings)
+        event = dict(
+            id=1,
+            message_key="statistics",
+            voltage=None,
+            load_watts=0,
+            duration="",
+            level=None,
+            threshold=None,
+            forecast_action=None,
+            forecast_text=None,
+            report_payload=json.dumps(
+                {
+                    "period": "day",
+                    "start": "2026-11-01T00:00:00+02:00",
+                    "end": "2026-11-02T00:00:00+02:00",
+                    "stats": make_stats(),
+                }
+            ),
+        )
+        with (
+            patch.object(
+                notification_repository, "get_pending_notifications", AsyncMock(return_value=[event])
+            ),
+            patch.object(chat_repository, "get_chats", AsyncMock(return_value=[(123, "uk")])) as recipients,
+            patch.object(self.bot, "send_message", AsyncMock()) as send,
+            patch.object(notification_repository, "mark_notification_delivered", AsyncMock()) as mark,
+        ):
+            await monitor.deliver_pending()
+        self.assertIn("Денна", send.await_args.args[1])
+        self.assertIn("3.50", send.await_args.args[1])
+        recipients.assert_awaited_once_with(None, stats_only=True)
+        mark.assert_awaited_once_with(None, 1)
+
+    async def test_report_without_opted_in_recipients_is_not_sent(self):
+        monitor = NotificationService(None, self.bot, self.settings)
+        with (
+            patch.object(
+                notification_repository,
+                "get_pending_notifications",
+                AsyncMock(
+                    return_value=[
+                        {"id": 1, "message_key": "statistics"},
+                    ]
+                ),
+            ),
+            patch.object(chat_repository, "get_chats", AsyncMock(return_value=[])) as recipients,
+            patch.object(self.bot, "send_message", AsyncMock()) as send,
+            patch.object(notification_repository, "mark_notification_delivered", AsyncMock()) as mark,
+        ):
+            await monitor.deliver_pending()
+        recipients.assert_awaited_once_with(None, stats_only=True)
+        send.assert_not_awaited()
+        mark.assert_awaited_once_with(None, 1)
+
+    async def test_power_alerts_use_power_subscribers(self):
+        monitor = NotificationService(None, self.bot, self.settings)
+        event = dict(
+            id=1,
+            message_key="battery_full",
+            voltage=None,
+            load_watts=0,
+            duration="",
+            level=100,
+            threshold=100,
+            forecast_action=None,
+            forecast_text=None,
+            report_payload=None,
+        )
+        with (
+            patch.object(
+                notification_repository, "get_pending_notifications", AsyncMock(return_value=[event])
+            ),
+            patch.object(chat_repository, "get_chats", AsyncMock(return_value=[(123, "uk")])) as recipients,
+            patch.object(self.bot, "send_message", AsyncMock()) as send,
+            patch.object(notification_repository, "mark_notification_delivered", AsyncMock()),
+        ):
+            await monitor.deliver_pending()
+        recipients.assert_awaited_once_with(None, stats_only=False)
+        self.assertEqual(send.await_args.args[0], 123)
+
+    async def test_disabled_global_reports_do_not_deliver_old_queue_events(self):
+        monitor = NotificationService(None, self.bot, self.settings)
+        monitor.settings = replace(self.settings, stats_auto_reports=False)
+        with (
+            patch.object(
+                notification_repository,
+                "get_pending_notifications",
+                AsyncMock(
+                    return_value=[
+                        {"id": 1, "message_key": "statistics"},
+                    ]
+                ),
+            ),
+            patch.object(self.bot, "send_message", AsyncMock()) as send,
+            patch.object(notification_repository, "mark_notification_delivered", AsyncMock()) as mark,
+        ):
+            await monitor.deliver_pending()
+        send.assert_not_awaited()
+        mark.assert_awaited_once_with(None, 1)

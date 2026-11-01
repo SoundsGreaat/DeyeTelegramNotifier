@@ -1,11 +1,12 @@
-import unittest
 import asyncio
+import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from energy_stats import _build_intervals, get_statistics, report_period
 from support import IsolatedTestConfig
+
+from deye_notifier.statistics import _build_intervals, get_statistics, report_period
 
 
 def utc(text):
@@ -23,7 +24,9 @@ class EnergyStatsTests(IsolatedTestConfig, unittest.TestCase):
             (utc("2025-01-02T00:10:00"), False, 200, 80),
             (utc("2025-01-02T00:20:00"), False, 300, 70),
         ]
-        intervals, unknown = _build_intervals(rows, utc("2025-01-02T00:00:00"), utc("2025-01-02T00:30:00"), 900)
+        intervals, unknown = _build_intervals(
+            rows, utc("2025-01-02T00:00:00"), utc("2025-01-02T00:30:00"), 900
+        )
         self.assertEqual(unknown, 600)
         self.assertEqual(sum(i[2] for i in intervals if i[3]), 600)
         self.assertEqual(sum(i[2] for i in intervals if not i[3]), 600)
@@ -34,24 +37,46 @@ class EnergyStatsTests(IsolatedTestConfig, unittest.TestCase):
             (utc("2025-01-01T00:00:00"), True, 100, 90),
             (utc("2025-01-01T00:10:00"), False, 200, 80),
         ]
-        intervals, unknown = _build_intervals(rows, utc("2025-01-01T00:00:00"), utc("2025-01-01T00:20:00"), 120)
+        intervals, unknown = _build_intervals(
+            rows, utc("2025-01-01T00:00:00"), utc("2025-01-01T00:20:00"), 120
+        )
         self.assertEqual(intervals, [])
         self.assertEqual(unknown, 1200)
 
     def test_numeric_statistics_and_successor_at_end(self):
         start, end = utc("2025-01-02T00:00:00"), utc("2025-01-02T00:30:00")
         rows = [
-            {"observed_at": utc("2025-01-01T23:50:00"), "is_grid_online": True, "load_watts": 100, "battery_soc": 90},
-            {"observed_at": utc("2025-01-02T00:10:00"), "is_grid_online": False, "load_watts": 200, "battery_soc": 80},
-            {"observed_at": utc("2025-01-02T00:20:00"), "is_grid_online": False, "load_watts": 300, "battery_soc": 70},
-            {"observed_at": utc("2025-01-02T00:30:00"), "is_grid_online": True, "load_watts": 50, "battery_soc": 75},
+            {
+                "observed_at": utc("2025-01-01T23:50:00"),
+                "is_grid_online": True,
+                "load_watts": 100,
+                "battery_soc": 90,
+            },
+            {
+                "observed_at": utc("2025-01-02T00:10:00"),
+                "is_grid_online": False,
+                "load_watts": 200,
+                "battery_soc": 80,
+            },
+            {
+                "observed_at": utc("2025-01-02T00:20:00"),
+                "is_grid_online": False,
+                "load_watts": 300,
+                "battery_soc": 70,
+            },
+            {
+                "observed_at": utc("2025-01-02T00:30:00"),
+                "is_grid_online": True,
+                "load_watts": 50,
+                "battery_soc": 75,
+            },
         ]
 
         async def fake_fetch(*_args):
             return rows
 
         async def run():
-            with patch("energy_stats._fetch_samples", fake_fetch):
+            with patch("deye_notifier.statistics.telemetry.fetch_samples", fake_fetch):
                 return await get_statistics(None, start, end, max_gap_seconds=1800)
 
         stats = asyncio_run(run())
@@ -73,7 +98,7 @@ class EnergyStatsTests(IsolatedTestConfig, unittest.TestCase):
             return rows
 
         async def run():
-            with patch("energy_stats._fetch_samples", fake_fetch):
+            with patch("deye_notifier.statistics.telemetry.fetch_samples", fake_fetch):
                 return await get_statistics(None, start, end)
 
         stats = asyncio_run(run())

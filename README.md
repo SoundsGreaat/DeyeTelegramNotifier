@@ -77,7 +77,7 @@ Reports include estimated consumption, average and peak load, grid availability,
 
 Alembic manages the database schema and applies pending migrations before the bot starts. Set `DB_AUTO_MIGRATE=false` if migrations are applied separately during deployment.
 
-See [MIGRATIONS.md](MIGRATIONS.md) for upgrade, rollback, and revision-authoring instructions.
+See [migration guide](docs/migrations.md) for upgrade, rollback, and revision-authoring instructions.
 
 ## Tests
 
@@ -90,3 +90,23 @@ python -m unittest discover -s tests -v
 Tests use synthetic data and mocked Telegram/inverter connections. PostgreSQL integration tests require an explicit `TEST_POSTGRES_DSN` pointing to a local database named `deye_test`; otherwise they are skipped.
 
 GitHub Actions runs the full suite on pushes and pull requests using Python 3.11 and a disposable PostgreSQL 17 service. No production credentials or `.env` file are required.
+
+## Project structure
+
+```text
+deye_notifier/
+  app.py          # Startup, dependencies and shutdown
+  config.py       # Environment settings
+  bot/            # Telegram commands, menu and messages
+  database/       # Connections, repositories and migration runner
+  inverter/       # Solarman client and status monitoring
+  services/       # Notification delivery, reports and schedule forecasts
+  statistics.py   # Report periods and energy calculations
+migrations/       # Alembic schema revisions
+tests/
+  unit/           # Component tests with mocked external services
+  integration/    # PostgreSQL migration and persistence tests
+docs/             # Deployment and migration details
+```
+
+For a local run, install `requirements.txt` and use `python -m deye_notifier` from the project root. `python main.py` is also supported.

@@ -106,7 +106,7 @@ LANGUAGES = {
 
 
 def normalize_language(lang_code):
-    return lang_code if lang_code in LANGUAGES else 'en'
+    return lang_code if lang_code in LANGUAGES else "en"
 
 
 def get_message(lang_code, key, **kwargs):
@@ -155,7 +155,11 @@ def format_duration(seconds, lang_code="en"):
     hours, rest = divmod(rest, 3600)
     minutes, secs = divmod(rest, 60)
     units = _DURATION_UNITS.get(lang_code, _DURATION_UNITS["en"])
-    parts = [f"{n}{u}" for n, u in ((days, units[0]), (hours, units[1]), (minutes, units[2]), (secs, units[3])) if n]
+    parts = [
+        f"{n}{u}"
+        for n, u in ((days, units[0]), (hours, units[1]), (minutes, units[2]), (secs, units[3]))
+        if n
+    ]
     return " ".join(parts) if parts else f"0{units[3]}"
 
 
@@ -168,7 +172,9 @@ def get_state_duration_line(lang_code, is_grid_online, seconds):
         "es": ("\n💡 Red disponible: {duration}", "\n🕯 Red ausente: {duration}"),
         "de": ("\n💡 Netz verfügbar seit: {duration}", "\n🕯 Netz fehlt seit: {duration}"),
     }
-    return (labels.get(lang_code, labels["en"])[0 if is_grid_online else 1]).format(duration=format_duration(seconds, lang_code))
+    return (labels.get(lang_code, labels["en"])[0 if is_grid_online else 1]).format(
+        duration=format_duration(seconds, lang_code)
+    )
 
 
 def get_runtime_line(lang_code, battery_soc, load_watts, capacity_kwh, cutoff_soc, efficiency=1.0):
@@ -224,32 +230,84 @@ def _hours(seconds):
 
 _REPORT_LABELS = {
     "en": {
-        "titles": {"day": "Daily electricity statistics", "week": "Weekly electricity statistics", "month": "Monthly electricity statistics"},
-        "consumption": "Estimated consumption", "avg": "Average load", "peak": "Peak load",
-        "online": "Grid available", "offline": "Grid unavailable", "outages": "Observed outages",
-        "longest": "Longest outage", "soc": "Battery range", "coverage": "Coverage", "unknown": "Unknown gaps",
-        "energy_unit": "kWh", "power_unit": "W", "time_unit": "h",
+        "titles": {
+            "day": "Daily electricity statistics",
+            "week": "Weekly electricity statistics",
+            "month": "Monthly electricity statistics",
+        },
+        "consumption": "Estimated consumption",
+        "avg": "Average load",
+        "peak": "Peak load",
+        "online": "Grid available",
+        "offline": "Grid unavailable",
+        "outages": "Observed outages",
+        "longest": "Longest outage",
+        "soc": "Battery range",
+        "coverage": "Coverage",
+        "unknown": "Unknown gaps",
+        "energy_unit": "kWh",
+        "power_unit": "W",
+        "time_unit": "h",
     },
     "uk": {
-        "titles": {"day": "Денна статистика електроенергії", "week": "Тижнева статистика електроенергії", "month": "Місячна статистика електроенергії"},
-        "consumption": "Орієнтовне споживання", "avg": "Середнє навантаження", "peak": "Пікове навантаження",
-        "online": "Світло є", "offline": "Світла немає", "outages": "Зафіксовані відключення",
-        "longest": "Найдовше відключення", "soc": "Діапазон заряду", "coverage": "Покриття даними", "unknown": "Невідомі проміжки",
-        "energy_unit": "кВт·год", "power_unit": "Вт", "time_unit": "г",
+        "titles": {
+            "day": "Денна статистика електроенергії",
+            "week": "Тижнева статистика електроенергії",
+            "month": "Місячна статистика електроенергії",
+        },
+        "consumption": "Орієнтовне споживання",
+        "avg": "Середнє навантаження",
+        "peak": "Пікове навантаження",
+        "online": "Світло є",
+        "offline": "Світла немає",
+        "outages": "Зафіксовані відключення",
+        "longest": "Найдовше відключення",
+        "soc": "Діапазон заряду",
+        "coverage": "Покриття даними",
+        "unknown": "Невідомі проміжки",
+        "energy_unit": "кВт·год",
+        "power_unit": "Вт",
+        "time_unit": "г",
     },
     "es": {
-        "titles": {"day": "Estadística eléctrica diaria", "week": "Estadística eléctrica semanal", "month": "Estadística eléctrica mensual"},
-        "consumption": "Consumo estimado", "avg": "Carga media", "peak": "Carga máxima",
-        "online": "Red disponible", "offline": "Red ausente", "outages": "Cortes observados",
-        "longest": "Corte más largo", "soc": "Rango de batería", "coverage": "Cobertura", "unknown": "Intervalos desconocidos",
-        "energy_unit": "kWh", "power_unit": "W", "time_unit": "h",
+        "titles": {
+            "day": "Estadística eléctrica diaria",
+            "week": "Estadística eléctrica semanal",
+            "month": "Estadística eléctrica mensual",
+        },
+        "consumption": "Consumo estimado",
+        "avg": "Carga media",
+        "peak": "Carga máxima",
+        "online": "Red disponible",
+        "offline": "Red ausente",
+        "outages": "Cortes observados",
+        "longest": "Corte más largo",
+        "soc": "Rango de batería",
+        "coverage": "Cobertura",
+        "unknown": "Intervalos desconocidos",
+        "energy_unit": "kWh",
+        "power_unit": "W",
+        "time_unit": "h",
     },
     "de": {
-        "titles": {"day": "Tägliche Stromstatistik", "week": "Wöchentliche Stromstatistik", "month": "Monatliche Stromstatistik"},
-        "consumption": "Geschätzter Verbrauch", "avg": "Durchschnittslast", "peak": "Spitzenlast",
-        "online": "Netz verfügbar", "offline": "Netz fehlt", "outages": "Beobachtete Ausfälle",
-        "longest": "Längster Ausfall", "soc": "Batteriebereich", "coverage": "Datenabdeckung", "unknown": "Unbekannte Lücken",
-        "energy_unit": "kWh", "power_unit": "W", "time_unit": "Std",
+        "titles": {
+            "day": "Tägliche Stromstatistik",
+            "week": "Wöchentliche Stromstatistik",
+            "month": "Monatliche Stromstatistik",
+        },
+        "consumption": "Geschätzter Verbrauch",
+        "avg": "Durchschnittslast",
+        "peak": "Spitzenlast",
+        "online": "Netz verfügbar",
+        "offline": "Netz fehlt",
+        "outages": "Beobachtete Ausfälle",
+        "longest": "Längster Ausfall",
+        "soc": "Batteriebereich",
+        "coverage": "Datenabdeckung",
+        "unknown": "Unbekannte Lücken",
+        "energy_unit": "kWh",
+        "power_unit": "W",
+        "time_unit": "Std",
     },
 }
 

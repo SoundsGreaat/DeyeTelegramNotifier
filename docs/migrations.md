@@ -7,9 +7,9 @@ The project uses [Alembic](https://alembic.sqlalchemy.org/en/latest/) with an as
 - `migrations/versions/` is the only place for schema DDL and data migrations.
 - `alembic.ini` points to that directory and contains no credentials.
 - `migrations/env.py` is shared by the Alembic CLI and application startup.
-- `db_migrations.py` builds the connection URL from `POSTGRES_*`, applies pending revisions, or checks the current version.
-- `main.py` waits for database connectivity, prepares the schema, then starts monitoring, report generation, notification delivery, and Telegram polling. A migration failure closes the pool and exits before workers start.
-- `energy_stats.py` only reads/writes telemetry; it does not create tables.
+- `deye_notifier/database/migrations.py` builds the connection URL from `POSTGRES_*`, applies pending revisions, or checks the current version.
+- `deye_notifier/app.py` waits for database connectivity, prepares the schema, then starts monitoring, report generation, notification delivery, and Telegram polling. A migration failure closes the pool and exits before workers start.
+- `deye_notifier/database/telemetry.py` reads/writes telemetry; it does not create tables.
 
 Each online migration command takes the same transaction-scoped PostgreSQL advisory lock **before** checking the version table. All pending revisions and their `alembic_version` updates run in one transaction. A failure rolls back that entire command, including earlier revisions from that command. The lock is released on commit, rollback, or connection loss. Lock acquisition waits at most 30 seconds; a failed startup can be retried after the other migration finishes.
 
@@ -70,7 +70,7 @@ docker compose up -d deye-monitor
 
 ## Local commands
 
-Install `requirements.txt` in your virtual environment. Supply `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` through `.env` or the environment. The defaults match Compose (`postgres:5432`); standalone host access usually needs a different host and a reachable port. Alembic commands never import `main.py` and do not require inverter settings or `TELEGRAM_TOKEN`.
+Install `requirements.txt` in your virtual environment. Supply `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` through `.env` or the environment. The defaults match Compose (`postgres:5432`); standalone host access usually needs a different host and a reachable port. Alembic commands never start the bot and do not require inverter settings or `TELEGRAM_TOKEN`.
 
 ```bash
 python -m alembic current
