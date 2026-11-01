@@ -36,6 +36,7 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
                 forecast_text="",
                 report_payload=None,
                 charge_eta_seconds=seconds,
+                charge_power_watts=4046 if key == "battery_charging" else None,
                 runtime_eta_seconds=43200 if key == "warning_battery" else None,
                 battery_cutoff_soc=15 if key == "warning_battery" else None,
             )
@@ -50,6 +51,8 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
                 service = NotificationService(None, self.bot, self.settings)
                 await service.deliver_pending()
             self.assertIn(expected, self.bot.send_message.await_args.args[1])
+            if key == "battery_charging":
+                self.assertIn("Charging: 4046 W", self.bot.send_message.await_args.args[1])
             self.assertNotIn("Usable reserve", self.bot.send_message.await_args.args[1])
 
     async def test_report_delivery_formats_saved_payload_for_chat_language(self):

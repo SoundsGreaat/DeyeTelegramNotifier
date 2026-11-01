@@ -27,6 +27,7 @@ The current chain is:
 | `0004_language_cleanup` | Switch saved Russian language preferences to English without changing subscriptions. |
 | `0005_battery_eta` | Preserve charging time estimates with queued battery notifications. |
 | `0006_measured_telemetry` | Store measured load-energy counters and battery runtime forecasts. |
+| `0007_charge_power` | Preserve charging power with queued battery notifications. |
 
 Both a fresh database and the project's known unversioned schemas can run `upgrade head`. The adoption revisions use conditional, additive SQL and preserve existing rows. Already timezone-aware values are left unchanged. There is no need to run `stamp`; stamping an unverified database would bypass the actual migrations.
 

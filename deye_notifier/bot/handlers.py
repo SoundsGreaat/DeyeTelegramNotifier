@@ -120,6 +120,7 @@ async def cmd_status(
         )
         if not charge_estimate.is_charging
         else "",
+        charge_power_line=locales.get_charge_power_line(user_lang, snapshot.charge_power_watts),
         charge_time_line=locales.get_charge_time_line(user_lang, charge_estimate.seconds_remaining)
         if charge_estimate.is_charging
         else "",

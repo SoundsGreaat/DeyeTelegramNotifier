@@ -65,6 +65,7 @@ class DeyeStatusMonitor:
             threshold=kwargs.get("threshold"),
             forecast_text=kwargs.get("forecast_text", ""),
             charge_eta_seconds=kwargs.get("charge_eta_seconds"),
+            charge_power_watts=kwargs.get("charge_power_watts"),
             runtime_eta_seconds=kwargs.get("runtime_eta_seconds"),
             battery_cutoff_soc=kwargs.get("battery_cutoff_soc"),
         )
@@ -208,6 +209,7 @@ class DeyeStatusMonitor:
                 else None,
                 runtime_eta_seconds=runtime_seconds,
                 battery_cutoff_soc=cutoff,
+                charge_power_watts=reading.charge_power_watts if key == "battery_charging" else None,
             )
         self.last_battery_soc = battery_soc
         return reading

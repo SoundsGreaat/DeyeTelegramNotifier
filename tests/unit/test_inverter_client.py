@@ -10,7 +10,7 @@ class InverterClientTests(IsolatedTestConfig, unittest.TestCase):
     def registers(self):
         values = [0] * 45
         values[0], values[14], values[28], values[34] = 2300, 300, 750, 80
-        values[41], values[44] = 65536 - 8000, 1
+        values[40], values[41], values[44] = 65536 - 4046, 65536 - 8000, 1
         settings = [0] * 14
         settings[0], settings[9], settings[13] = 200, 1, 15
         return values, settings, [1234, 1]
@@ -20,13 +20,14 @@ class InverterClientTests(IsolatedTestConfig, unittest.TestCase):
         connection.read_holding_registers.side_effect = self.registers()
         with patch("deye_notifier.inverter.client.PySolarmanV5", return_value=connection) as client:
             snapshot = InverterClient(self.settings).read_status()
-        self.assertEqual(snapshot, InverterReading(230, True, 80, 750, -80, 200, 15, 6677))
+        self.assertEqual(snapshot, InverterReading(230, True, 80, 750, -80, 200, 15, 6677, -4046))
         self.assertEqual(client.call_args.args, (self.settings.inverter_ip, self.settings.logger_serial))
         self.assertEqual(
             connection.read_holding_registers.call_args_list, [call(150, 45), call(204, 14), call(85, 2)]
         )
         self.assertTrue(snapshot.is_grid_online)  # Register 164 is current, not mode 300.
         self.assertEqual(snapshot.battery_seconds(100), 1800)
+        self.assertEqual(snapshot.charge_power_watts, 4046)
         connection.disconnect.assert_called_once()
 
     def test_optional_register_failure_keeps_status_and_uses_fallbacks(self):

@@ -72,9 +72,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
     async def test_fresh_database_and_repeat_upgrade(self):
         await self.migrate()
         await self.migrate()
-        self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0006_measured_telemetry",)]
-        )
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0007_charge_power",)])
         tables = await self.sql("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
         self.assertEqual(
             {row[0] for row in tables},
@@ -198,9 +196,12 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
                 level=75,
                 load=1000,
                 charge_eta_seconds=1800,
+                charge_power_watts=4046,
             )
             events = await notification_repository.get_pending_notifications(pool)
             self.assertEqual(events[-1]["charge_eta_seconds"], 1800)
+            self.assertEqual(events[-1]["charge_power_watts"], 4046)
+            self.assertIsNone(events[0]["charge_power_watts"])
             self.assertEqual(events[-1]["load_watts"], 1000)
             await state_repository.record_transition(
                 pool,
@@ -238,9 +239,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "subscription preferences"):
             await self.migrate("0002_reports", downgrade=True)
-        self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0006_measured_telemetry",)]
-        )
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0007_charge_power",)])
         await self.migrate("0002_reports", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(await self.sql("SELECT chat_id FROM chats"), [(123,)])
 
@@ -271,9 +270,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "allow_data_loss"):
             await self.migrate("0001_legacy", downgrade=True)
-        self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0006_measured_telemetry",)]
-        )
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0007_charge_power",)])
         self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
         await self.migrate("0001_legacy", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(
@@ -289,10 +286,10 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         with TemporaryDirectory() as directory:
             scripts = Path(directory) / "migrations"
             shutil.copytree(db_migrations.ROOT / "migrations", scripts)
-            (scripts / "versions" / "0007_failure.py").write_text(
+            (scripts / "versions" / "0008_failure.py").write_text(
                 "from alembic import op\n"
-                "revision = '0007_failure'\n"
-                "down_revision = '0006_measured_telemetry'\n"
+                "revision = '0008_failure'\n"
+                "down_revision = '0007_charge_power'\n"
                 "def upgrade():\n"
                 "    op.execute('CREATE TABLE migration_should_rollback (id INTEGER)')\n"
                 "    raise RuntimeError('synthetic migration failure')\n"

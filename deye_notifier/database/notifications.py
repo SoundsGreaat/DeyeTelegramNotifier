@@ -16,6 +16,7 @@ async def enqueue_notification(
     charge_eta_seconds=None,
     runtime_eta_seconds=None,
     battery_cutoff_soc=None,
+    charge_power_watts=None,
 ):
     async def operation():
         async with pool.acquire() as conn:
@@ -23,8 +24,8 @@ async def enqueue_notification(
                 """
                 INSERT INTO notification_queue
                     (message_key, voltage, load_watts, duration, level, forecast_action, forecast_text,
-                     threshold, charge_eta_seconds, runtime_eta_seconds, battery_cutoff_soc)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                     threshold, charge_eta_seconds, runtime_eta_seconds, battery_cutoff_soc, charge_power_watts)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 """,
                 message_key,
                 voltage,
@@ -37,6 +38,7 @@ async def enqueue_notification(
                 charge_eta_seconds,
                 runtime_eta_seconds,
                 battery_cutoff_soc,
+                charge_power_watts,
             )
 
     await db_retry(pool, operation)
@@ -49,7 +51,7 @@ async def get_pending_notifications(pool):
                 """
                 SELECT id, message_key, voltage, load_watts, duration, level,
                        forecast_action, forecast_text, threshold, report_payload, charge_eta_seconds,
-                       runtime_eta_seconds, battery_cutoff_soc
+                       runtime_eta_seconds, battery_cutoff_soc, charge_power_watts
                 FROM notification_queue
                 WHERE delivered_at IS NULL
                 ORDER BY id

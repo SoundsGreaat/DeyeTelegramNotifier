@@ -25,6 +25,13 @@ class InverterReading:
     battery_capacity_ah: float | None = None
     shutdown_soc: float | None = None
     total_load_energy_kwh: float | None = None
+    battery_power_watts: int | None = None
+
+    @property
+    def charge_power_watts(self):
+        # Deye reports negative DC power while charging.
+        power = self.battery_power_watts
+        return -power if power is not None and power < 0 else None
 
     @property
     def is_grid_online(self):
@@ -87,6 +94,7 @@ class InverterClient:
                 battery_capacity_ah=capacity,
                 shutdown_soc=cutoff,
                 total_load_energy_kwh=total_energy,
+                battery_power_watts=signed_word(data[40]),
             )
         except Exception:
             logger.exception("Could not read inverter telemetry")

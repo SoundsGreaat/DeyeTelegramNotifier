@@ -67,6 +67,9 @@ class NotificationService:
                         runtime_seconds=event.get("runtime_eta_seconds"),
                     )
                 if event["message_key"] == "battery_charging":
+                    kwargs["charge_power_line"] = locales.get_charge_power_line(
+                        language, event.get("charge_power_watts")
+                    )
                     kwargs["charge_time_line"] = locales.get_charge_time_line(
                         language, event["charge_eta_seconds"]
                     )

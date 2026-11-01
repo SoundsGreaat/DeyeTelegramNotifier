@@ -84,6 +84,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
             threshold=100,
             load=1000,
             charge_eta_seconds=None,
+            charge_power_watts=None,
             runtime_eta_seconds=None,
             battery_cutoff_soc=20,
         )
@@ -129,13 +130,16 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         monitor._charge_history_loaded = True
         for offset, soc in ((150, 72), (100, 73), (50, 74)):
             monitor.charge_estimator.observe(now - timedelta(seconds=offset), soc)
-        monitor.read_inverter = Mock(return_value=InverterReading(230, True, 75, 1000))
+        monitor.read_inverter = Mock(
+            return_value=InverterReading(230, True, 75, 1000, battery_power_watts=-4046)
+        )
         monitor.broadcast = AsyncMock()
         with patch.object(telemetry, "record_sample", AsyncMock()):
             await monitor.check()
         event = monitor.broadcast.await_args
         self.assertEqual(event.args[0], "battery_charging")
         self.assertEqual(event.kwargs["load"], 1000)
+        self.assertEqual(event.kwargs["charge_power_watts"], 4046)
         self.assertAlmostEqual(event.kwargs["charge_eta_seconds"], 25 * 50, delta=1)
 
     async def test_measured_charge_eta_updates_immediately_as_current_changes(self):

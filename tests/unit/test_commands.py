@@ -134,7 +134,11 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
                         chat=SimpleNamespace(id=123), answer=AsyncMock(return_value=wait)
                     )
                     monitor = SimpleNamespace(
-                        check=AsyncMock(return_value=InverterReading(230, True, 80, load, -80, 200, 20)),
+                        check=AsyncMock(
+                            return_value=InverterReading(
+                                230, True, 80, load, -80, 200, 20, battery_power_watts=-4046
+                            )
+                        ),
                         last_status_time=datetime.now(timezone.utc),
                         charging_estimate=lambda: ChargingEstimate(True, charge_seconds),
                     )
@@ -152,5 +156,6 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
                     runtime.assert_not_called()
                     text = wait.edit_text.await_args.args[0]
                     self.assertIn("80%", text)
+                    self.assertIn("4046", text)
                     self.assertEqual(text.count("100%"), 1 if charge_seconds is not None else 0)
                     self.assertNotIn("\n\n", text)

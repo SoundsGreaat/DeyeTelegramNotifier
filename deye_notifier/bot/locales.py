@@ -15,10 +15,10 @@ MESSAGES = {
         "warning_battery": "⚠️ <b>Warning: Battery Power</b>\nGrid voltage: {voltage}V\nLoad: {load}W\nOnline duration: {duration}{runtime_line}{forecast_line}",
         "power_restored": "✅ <b>Power Restored</b>\nGrid voltage: {voltage}V\nOffline duration: {duration}{forecast_line}",
         "battery_full": "🔋 <b>Battery Fully Charged</b>\nLevel: 100%",
-        "battery_charging": "📈 <b>Battery Charging</b>\nLevel: {level}%{charge_time_line}",
+        "battery_charging": "📈 <b>Battery Charging</b>\nLevel: {level}%{charge_power_line}{charge_time_line}",
         "battery_discharging": "📉 <b>Battery Discharging</b>\nLevel: {level}%{runtime_line}",
         "battery_low": "⚠️ <b>Battery Low</b>\nLevel: {level}%{runtime_line}",
-        "status": "📊 <b>System Status</b>\nGrid: {grid_status}\nVoltage: {voltage}V\nLoad: {load}W\nBattery: {battery}%{state_duration_line}{runtime_line}{charge_time_line}{forecast_line}",
+        "status": "📊 <b>System Status</b>\nGrid: {grid_status}\nVoltage: {voltage}V\nLoad: {load}W\nBattery: {battery}%{state_duration_line}{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
         "online": "Online 🟢",
         "offline": "Offline 🔴",
         "connection_failed": "❌ Connection failed",
@@ -37,10 +37,10 @@ MESSAGES = {
         "warning_battery": "⚠️ <b>Увага: Живлення від батареї</b>\nНапруга мережі: {voltage}В\nНавантаження: {load}Вт\nСвітло було: {duration}{runtime_line}{forecast_line}",
         "power_restored": "✅ <b>Живлення відновлено</b>\nНапруга мережі: {voltage}В\nСвітла не було: {duration}{forecast_line}",
         "battery_full": "🔋 <b>Батарея повністю заряджена</b>\nРівень: 100%",
-        "battery_charging": "📈 <b>Батарея заряджається</b>\nРівень: {level}%{charge_time_line}",
+        "battery_charging": "📈 <b>Батарея заряджається</b>\nРівень: {level}%{charge_power_line}{charge_time_line}",
         "battery_discharging": "📉 <b>Батарея розряджається</b>\nРівень: {level}%{runtime_line}",
         "battery_low": "⚠️ <b>Низький заряд батареї</b>\nРівень: {level}%{runtime_line}",
-        "status": "📊 <b>Статус системи</b>\nМережа: {grid_status}\nНапруга: {voltage}В\nНавантаження: {load}Вт\nБатарея: {battery}%{state_duration_line}{runtime_line}{charge_time_line}{forecast_line}",
+        "status": "📊 <b>Статус системи</b>\nМережа: {grid_status}\nНапруга: {voltage}В\nНавантаження: {load}Вт\nБатарея: {battery}%{state_duration_line}{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
         "online": "В мережі 🟢",
         "offline": "Відсутня 🔴",
         "connection_failed": "❌ Не вдалося підключитися до інвертора",
@@ -59,10 +59,10 @@ MESSAGES = {
         "warning_battery": "⚠️ <b>Advertencia: Energía de Batería</b>\nVoltaje de red: {voltage}V\nCarga: {load}W\nDuración en línea: {duration}{runtime_line}{forecast_line}",
         "power_restored": "✅ <b>Energía Restaurada</b>\nVoltaje de red: {voltage}V\nDuración fuera de línea: {duration}{forecast_line}",
         "battery_full": "🔋 <b>Batería Completamente Cargada</b>\nNivel: 100%",
-        "battery_charging": "📈 <b>Batería cargándose</b>\nNivel: {level}%{charge_time_line}",
+        "battery_charging": "📈 <b>Batería cargándose</b>\nNivel: {level}%{charge_power_line}{charge_time_line}",
         "battery_discharging": "📉 <b>Batería descargándose</b>\nNivel: {level}%{runtime_line}",
         "battery_low": "⚠️ <b>Batería baja</b>\nNivel: {level}%{runtime_line}",
-        "status": "📊 <b>Estado del Sistema</b>\nRed: {grid_status}\nVoltaje: {voltage}V\nCarga: {load}W\nBatería: {battery}%{state_duration_line}{runtime_line}{charge_time_line}{forecast_line}",
+        "status": "📊 <b>Estado del Sistema</b>\nRed: {grid_status}\nVoltaje: {voltage}V\nCarga: {load}W\nBatería: {battery}%{state_duration_line}{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
         "online": "En línea 🟢",
         "offline": "Fuera de línea 🔴",
         "connection_failed": "❌ No se pudo conectar",
@@ -81,10 +81,10 @@ MESSAGES = {
         "warning_battery": "⚠️ <b>Warnung: Batteriebetrieb</b>\nNetzspannung: {voltage}V\nLast: {load}W\nOnline-Dauer: {duration}{runtime_line}{forecast_line}",
         "power_restored": "✅ <b>Strom wiederhergestellt</b>\nNetzspannung: {voltage}V\nOffline-Dauer: {duration}{forecast_line}",
         "battery_full": "🔋 <b>Batterie voll geladen</b>\nStand: 100%",
-        "battery_charging": "📈 <b>Batterie wird geladen</b>\nStand: {level}%{charge_time_line}",
+        "battery_charging": "📈 <b>Batterie wird geladen</b>\nStand: {level}%{charge_power_line}{charge_time_line}",
         "battery_discharging": "📉 <b>Batterie entlädt</b>\nStand: {level}%{runtime_line}",
         "battery_low": "⚠️ <b>Batteriestand niedrig</b>\nStand: {level}%{runtime_line}",
-        "status": "📊 <b>Systemstatus</b>\nNetz: {grid_status}\nSpannung: {voltage}V\nLast: {load}W\nBatterie: {battery}%{state_duration_line}{runtime_line}{charge_time_line}{forecast_line}",
+        "status": "📊 <b>Systemstatus</b>\nNetz: {grid_status}\nSpannung: {voltage}V\nLast: {load}W\nBatterie: {battery}%{state_duration_line}{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
         "online": "Online 🟢",
         "offline": "Offline 🔴",
         "connection_failed": "❌ Verbindung fehlgeschlagen",
@@ -114,6 +114,7 @@ def get_message(lang_code, key, **kwargs):
             "state_duration_line": "",
             "runtime_line": "",
             "charge_time_line": "",
+            "charge_power_line": "",
             "forecast_line": "",
             **kwargs,
         }
@@ -231,6 +232,18 @@ def get_runtime_line(
     duration = format_duration(usable / (load / 1000.0) * 3600, lang_code)
     line = head.format(cutoff=cutoff_text, duration=duration)
     return line + "\n" + energy_label.format(energy=usable) if include_energy else line
+
+
+def get_charge_power_line(lang_code, watts):
+    if watts is None or not math.isfinite(watts) or watts <= 0:
+        return ""
+    labels = {
+        "en": "\n⚡ Charging: {watts:.0f} W",
+        "uk": "\n⚡ Заряджання: {watts:.0f} Вт",
+        "es": "\n⚡ Potencia de carga: {watts:.0f} W",
+        "de": "\n⚡ Ladeleistung: {watts:.0f} W",
+    }
+    return labels.get(lang_code, labels["en"]).format(watts=watts)
 
 
 def get_charge_time_line(lang_code, seconds_remaining):

@@ -130,6 +130,23 @@ class MessageCopyTests(IsolatedTestConfig, unittest.TestCase):
             self.assertIn("⚪", report)
             self.assertIn(locales.format_duration(1800, language), report)
 
+    def test_charging_power_is_localized_and_missing_values_are_silent(self):
+        for language in locales.LANGUAGES:
+            line = locales.get_charge_power_line(language, 4046)
+            self.assertIn("4046", line)
+            message = locales.get_message(
+                language,
+                "battery_charging",
+                level=76,
+                charge_power_line=line,
+                charge_time_line=locales.get_charge_time_line(language, 2340),
+            )
+            self.assertIn("76%", message)
+            self.assertIn("4046", message)
+            self.assertIn(locales.format_duration(2340, language), message)
+            for watts in (None, 0, -100, float("nan"), float("inf")):
+                self.assertEqual(locales.get_charge_power_line(language, watts), "")
+
 
 class LanguageCompatibilityTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
     async def test_removed_language_is_not_offered_to_russian_telegram_clients(self):
