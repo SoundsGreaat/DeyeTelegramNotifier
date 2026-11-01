@@ -27,6 +27,11 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
             await handlers.cmd_status(message, None, provider, monitor, self.settings)
         text = wait.edit_text.await_args.args[0]
         self.assertIn("Світло є вже: 2г", text)
+        self.assertIn("Напруга: 230.0 В", text)
+        self.assertIn("Навантаження: 1000 Вт", text)
+        self.assertLess(text.index("Світло є вже:"), text.index("Напруга:"))
+        self.assertLess(text.index("Напруга:"), text.index("Навантаження:"))
+        self.assertLess(text.index("Навантаження:"), text.index("Батарея:"))
         self.assertIn("5г 24хв", text)
         monitor.check.assert_awaited_once()
 
@@ -123,6 +128,7 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         self.assertIn("Estimated runtime to 15%: 12h", result)
         self.assertIn("Usable reserve: 6.00 kWh", result)
         self.assertIn("Offline", result)
+        self.assertNotIn("Voltage:", result)
         self.assertNotIn("set BATTERY_CAPACITY_KWH", result)
 
     async def test_charging_status_omits_runtime_for_zero_or_positive_load_in_every_language(self):

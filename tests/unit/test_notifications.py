@@ -22,12 +22,13 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
             ("battery_discharging", None, "Estimated runtime to 20%: 4h 57m"),
             ("battery_low", None, "Estimated runtime to 20%: 4h 57m"),
             ("warning_battery", None, "Estimated runtime to 15%: 12h"),
+            ("power_restored", None, "Grid was unavailable: 1h"),
         )
         for key, seconds, expected in cases:
             event = dict(
                 id=1,
                 message_key=key,
-                voltage=0,
+                voltage=230.1 if key == "power_restored" else 0,
                 load_watts=1000,
                 duration="1h",
                 level=75,
@@ -53,7 +54,18 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
             self.assertIn(expected, self.bot.send_message.await_args.args[1])
             if key == "battery_charging":
                 self.assertIn("Charging: 4046 W", self.bot.send_message.await_args.args[1])
-            self.assertNotIn("Usable reserve", self.bot.send_message.await_args.args[1])
+            text = self.bot.send_message.await_args.args[1]
+            self.assertNotIn("Usable reserve", text)
+            if key in {"battery_discharging", "battery_low", "warning_battery"}:
+                self.assertIn("Load: 1000 W", text)
+                self.assertLess(text.index("Load:"), text.index("Estimated runtime"))
+            if key == "warning_battery":
+                self.assertIn("Battery: 75%", text)
+                self.assertNotIn("Voltage:", text)
+                self.assertLess(text.index("Grid was available:"), text.index("Load:"))
+            if key == "power_restored":
+                self.assertIn("Voltage: 230.1 V", text)
+                self.assertLess(text.index("Grid was unavailable:"), text.index("Voltage:"))
 
     async def test_report_delivery_formats_saved_payload_for_chat_language(self):
         monitor = NotificationService(None, self.bot, self.settings)

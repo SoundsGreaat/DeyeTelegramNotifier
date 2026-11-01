@@ -147,6 +147,54 @@ class MessageCopyTests(IsolatedTestConfig, unittest.TestCase):
             for watts in (None, 0, -100, float("nan"), float("inf")):
                 self.assertEqual(locales.get_charge_power_line(language, watts), "")
 
+    def test_power_and_battery_notifications_group_context_before_estimates_in_all_languages(self):
+        for language in locales.LANGUAGES:
+            duration = locales.format_saved_duration("2h 15m", language)
+            self.assertEqual(duration, locales.format_duration(8100, language))
+            load = locales.get_load_line(language, 800)
+            battery = locales.get_battery_level_line(language, 75)
+            voltage = locales.get_voltage_line(language, 215.1)
+            forecast = locales.get_forecast_line(language, "turn_on", "01.11.2026 20:00")
+            runtime = locales.get_runtime_line(
+                language, 75, 800, 10, 20, runtime_seconds=12367, include_energy=False
+            )
+            for key in ("warning_battery", "battery_discharging", "battery_low"):
+                text = locales.get_message(
+                    language,
+                    key,
+                    duration=duration,
+                    level=75,
+                    load_line=load,
+                    battery_level_line=battery,
+                    runtime_line=runtime,
+                    forecast_line=forecast,
+                )
+                self.assertLess(text.index("800"), text.index(runtime.strip()))
+                self.assertEqual(text.count("75%"), 1)
+                self.assertTrue(text.endswith(forecast if key == "warning_battery" else runtime))
+                self.assertNotIn("{", text)
+                self.assertNotIn("\n\n", text)
+            restored = locales.get_message(
+                language, "power_restored", duration=duration, voltage_line=voltage, forecast_line=forecast
+            )
+            self.assertLess(restored.index(duration), restored.index("215.1"))
+            self.assertNotRegex(restored, r"\d(?:W|V|Вт|В)(?:\n|$)")
+
+    def test_rounded_estimates_and_optional_measurements_do_not_add_placeholder_lines(self):
+        for language in locales.LANGUAGES:
+            self.assertEqual(locales.format_saved_duration("old duration", language), "old duration")
+            self.assertIn(
+                locales.format_duration(12360, language),
+                locales.get_runtime_line(language, 75, 800, 0, 20, runtime_seconds=12367),
+            )
+            self.assertNotIn(
+                locales.format_duration(12367, language),
+                locales.get_runtime_line(language, 75, 800, 0, 20, runtime_seconds=12367),
+            )
+            self.assertEqual(locales.get_battery_level_line(language, None), "")
+            self.assertEqual(locales.get_load_line(language, None), "")
+            self.assertEqual(locales.get_voltage_line(language, None), "")
+
 
 class LanguageCompatibilityTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
     async def test_removed_language_is_not_offered_to_russian_telegram_clients(self):

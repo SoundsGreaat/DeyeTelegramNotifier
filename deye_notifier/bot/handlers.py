@@ -102,6 +102,7 @@ async def cmd_status(
         "status",
         grid_status=grid_status_text,
         voltage=grid_v,
+        voltage_line=locales.get_voltage_line(user_lang, grid_v) if is_online else "",
         battery=battery_soc,
         load=load_watts,
         state_duration_line=locales.get_state_duration_line(

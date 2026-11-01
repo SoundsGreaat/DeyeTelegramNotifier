@@ -40,8 +40,11 @@ class NotificationService:
             for chat_id, language in chats:
                 kwargs = {
                     "voltage": event["voltage"],
+                    "voltage_line": locales.get_voltage_line(language, event["voltage"]),
                     "load": event["load_watts"],
-                    "duration": event["duration"],
+                    "duration": locales.format_saved_duration(event["duration"], language),
+                    "load_line": locales.get_load_line(language, event["load_watts"]),
+                    "battery_level_line": locales.get_battery_level_line(language, event["level"]),
                     "level": event["level"],
                     "threshold": event["threshold"] if event["threshold"] is not None else event["level"],
                     "forecast_line": locales.get_forecast_line(
