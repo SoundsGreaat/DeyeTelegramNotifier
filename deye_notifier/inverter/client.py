@@ -26,6 +26,7 @@ class InverterReading:
     shutdown_soc: float | None = None
     total_load_energy_kwh: float | None = None
     battery_power_watts: int | None = None
+    battery_voltage: float | None = None
 
     @property
     def is_charging(self):
@@ -107,6 +108,7 @@ class InverterClient:
                 shutdown_soc=cutoff,
                 total_load_energy_kwh=total_energy,
                 battery_power_watts=signed_word(data[40]),
+                battery_voltage=data[33] / 100.0 if 0 < data[33] <= 10000 else None,
             )
         except Exception:
             logger.exception("Could not read inverter telemetry")

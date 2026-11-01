@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from aiogram import Bot, types
@@ -42,5 +43,32 @@ class RouterTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
                         await create_dispatcher().feed_update(bot, update, pool=None, settings=self.settings)
                     self.assertIs(query.await_args.args[-1], self.settings)
                     self.assertIn(title, session.await_args_list[-1].args[1].text)
+                finally:
+                    await original_session.close()
+
+    async def test_live_commands_use_the_shared_service_from_dispatcher(self):
+        for command, method in (("live", "enable"), ("live_off", "stop")):
+            with self.subTest(command=command):
+                bot = Bot(token=self.settings.telegram_token)
+                original_session = bot.session
+                bot.session = AsyncMock(return_value=True)
+                service = SimpleNamespace(enable=AsyncMock(return_value=True), stop=AsyncMock())
+                update = types.Update(
+                    update_id=1,
+                    message=types.Message(
+                        message_id=1,
+                        date=datetime.now(timezone.utc),
+                        chat=types.Chat(id=123, type="private"),
+                        from_user=types.User(id=1, is_bot=False, first_name="Test", language_code="uk"),
+                        text="/" + command,
+                    ),
+                )
+                try:
+                    with patch.object(chats, "get_chat_language", AsyncMock(return_value="uk")):
+                        await create_dispatcher().feed_update(
+                            bot, update, pool=None, settings=self.settings, live_status_service=service
+                        )
+                    expected = (123, "uk") if method == "enable" else (123,)
+                    getattr(service, method).assert_awaited_once_with(*expected)
                 finally:
                     await original_session.close()

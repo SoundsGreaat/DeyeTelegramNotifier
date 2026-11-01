@@ -29,6 +29,7 @@ class DeyeStatusMonitor:
         self.charge_estimator = ChargeEstimator(max_gap_seconds=settings.stats_max_gap_seconds)
         self._charge_history_loaded = False
         self.latest_reading = None
+        self.latest_reading_at = None
         self._load_followup_task = None
 
     def format_duration(self, delta):
@@ -131,7 +132,7 @@ class DeyeStatusMonitor:
         if reading is not None and (
             reading.battery_power_watts is not None or reading.battery_current is not None
         ):
-            if (now - self._reading_at).total_seconds() > self.settings.stats_max_gap_seconds:
+            if (now - self.latest_reading_at).total_seconds() > self.settings.stats_max_gap_seconds:
                 return ChargingEstimate(False, None)
             charging = reading.is_charging
             seconds = reading.battery_seconds(100) if charging and reading.battery_soc < 100 else None
@@ -184,7 +185,7 @@ class DeyeStatusMonitor:
             return
         now = datetime.now(timezone.utc)
         self.latest_reading = reading
-        self._reading_at = now
+        self.latest_reading_at = now
         await self._observe_charge(now, battery_soc)
         currently_online = reading.is_grid_online
         runtime_seconds = reading.runtime_seconds(self.settings)

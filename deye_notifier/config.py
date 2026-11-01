@@ -43,6 +43,7 @@ class Settings:
     check_interval: int = 10
     log_level: str = "INFO"
     min_load_watts: float = 10
+    live_status_interval: float = 60
     battery_capacity_kwh: float = 0
     battery_cutoff_soc: float = 20
     battery_inverter_efficiency: float = 0.9
@@ -92,6 +93,7 @@ class Settings:
             check_interval=int(os.getenv("CHECK_INTERVAL", "10")),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             min_load_watts=_number("MIN_LOAD_WATTS", 10, 0, 1000000),
+            live_status_interval=_number("LIVE_STATUS_INTERVAL", 60, 30, 3600),
             battery_capacity_kwh=_number("BATTERY_CAPACITY_KWH", 0, 0, 100000),
             battery_cutoff_soc=_number("BATTERY_CUTOFF_SOC", 20, 0, 100),
             battery_inverter_efficiency=_number("BATTERY_INVERTER_EFFICIENCY", 0.9, 0.01, 1),

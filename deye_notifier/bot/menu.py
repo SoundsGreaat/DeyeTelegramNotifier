@@ -16,6 +16,8 @@ async def register_bot_commands(bot):
         types.BotCommand(command="start", description="Enable power and battery notifications"),
         types.BotCommand(command="stop", description="Disable all notifications and automatic reports"),
         types.BotCommand(command="status", description="Current status and estimated battery runtime"),
+        types.BotCommand(command="live", description="Create a pinned status that updates automatically"),
+        types.BotCommand(command="live_off", description="Stop and unpin the live status"),
         types.BotCommand(command="stats", description="Today's electricity statistics"),
         types.BotCommand(command="stats_day", description="Today's electricity statistics"),
         types.BotCommand(command="stats_week", description="This week's electricity statistics"),

@@ -73,3 +73,10 @@ with patch('dotenv.load_dotenv', side_effect=AssertionError('dotenv read on impo
             with self.subTest(value=value), patch.dict(os.environ, {"MIN_LOAD_WATTS": value}):
                 with self.assertRaises(ValueError):
                     Settings.from_env()
+
+    def test_live_refresh_interval_defaults_and_rejects_excessive_frequency(self):
+        self.assertEqual(Settings.from_env().live_status_interval, 60)
+        for value in ("0", "10", "nan", "inf", "3601"):
+            with self.subTest(value=value), patch.dict(os.environ, {"LIVE_STATUS_INTERVAL": value}):
+                with self.assertRaises(ValueError):
+                    Settings.from_env()

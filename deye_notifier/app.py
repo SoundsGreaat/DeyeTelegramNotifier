@@ -12,6 +12,7 @@ from deye_notifier.config import Settings
 from deye_notifier.database.connection import get_db_pool
 from deye_notifier.database.migrations import prepare_database
 from deye_notifier.inverter.monitor import DeyeStatusMonitor
+from deye_notifier.services.live_status import LiveStatusService
 from deye_notifier.services.notifications import NotificationService
 from deye_notifier.services.reports import statistics_loop
 from deye_notifier.services.schedules import YasnoScheduleProvider
@@ -39,9 +40,11 @@ async def main(settings=None):
         schedule_provider = YasnoScheduleProvider(pool, settings)
         monitor = DeyeStatusMonitor(pool, schedule_provider, settings)
         notifier = NotificationService(pool, bot, settings)
+        live_status_service = LiveStatusService(pool, bot, monitor, schedule_provider, settings)
         tasks = [
             asyncio.create_task(monitor.run()),
             asyncio.create_task(notifier.delivery_loop()),
+            asyncio.create_task(live_status_service.run()),
             asyncio.create_task(schedule_provider.run()),
             asyncio.create_task(statistics_loop(pool, settings)),
         ]
@@ -50,6 +53,7 @@ async def main(settings=None):
             pool=pool,
             schedule_provider=schedule_provider,
             monitor=monitor,
+            live_status_service=live_status_service,
             settings=settings,
             close_bot_session=False,
         )

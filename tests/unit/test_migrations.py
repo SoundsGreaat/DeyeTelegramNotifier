@@ -19,7 +19,8 @@ class MigrationConfigurationTests(IsolatedTestConfig, unittest.TestCase):
     def test_linear_revision_history_and_offline_upgrade(self):
         config = db_migrations.migration_config(self.settings)
         script = ScriptDirectory.from_config(config)
-        self.assertEqual(script.get_heads(), ["0007_charge_power"])
+        self.assertEqual(script.get_heads(), ["0008_live_status"])
+        self.assertEqual(script.get_revision("0008_live_status").down_revision, "0007_charge_power")
         self.assertEqual(script.get_revision("0007_charge_power").down_revision, "0006_measured_telemetry")
         self.assertEqual(script.get_revision("0006_measured_telemetry").down_revision, "0005_battery_eta")
         self.assertEqual(script.get_revision("0005_battery_eta").down_revision, "0004_language_cleanup")
@@ -69,6 +70,7 @@ class MigrationConfigurationTests(IsolatedTestConfig, unittest.TestCase):
             ("0004_language_cleanup",),
             ("0005_battery_eta",),
             ("0006_measured_telemetry",),
+            ("0007_charge_power",),
             ("future_revision",),
         ):
             with patch.object(

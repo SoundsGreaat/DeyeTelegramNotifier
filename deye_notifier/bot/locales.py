@@ -27,6 +27,10 @@ MESSAGES = {
         "stats_failed": "❌ Could not build the electricity report.",
         "stats_usage": "Usage: /stats [day|week|month] (or /stats_day, /stats_week, /stats_month)",
         "stats_empty": "📭 Not enough data for this period yet.",
+        "live_stopped": "⏸ Live status updates stopped.",
+        "live_replaced": "⏸ This status is inactive; a newer live message has replaced it.",
+        "live_pin_failed": "Live status is updating. If the message is not pinned, you can pin it manually.",
+        "live_failed": "❌ Could not update live status. Please try again.",
     },
     "uk": {
         "start": "✅ Сповіщення про мережу та батарею ввімкнено.\n/status — стан; /stats day, /stats week або /stats month — звіти за запитом; /lang — мова.\nАвтозвіти потребують окремої підписки /stats_auto_on; /stats_auto_off — вимкнути.",
@@ -50,6 +54,10 @@ MESSAGES = {
         "stats_failed": "❌ Не вдалося сформувати статистику.",
         "stats_usage": "Використання: /stats [day|week|month] (або /stats_day, /stats_week, /stats_month)",
         "stats_empty": "📭 Недостатньо даних за цей період.",
+        "live_stopped": "⏸ Оновлення статусу зупинено.",
+        "live_replaced": "⏸ Цей статус неактивний: створено нове повідомлення.",
+        "live_pin_failed": "Статус оновлюється. Якщо повідомлення не закріплене, закріпіть його вручну.",
+        "live_failed": "❌ Не вдалося оновити живий статус. Спробуйте ще раз.",
     },
     "es": {
         "start": "✅ Avisos de red y batería activados.\n/status — estado; /stats day, /stats week o /stats month — informes a petición; /lang — idioma.\nLos informes automáticos requieren /stats_auto_on; /stats_auto_off los desactiva.",
@@ -73,6 +81,10 @@ MESSAGES = {
         "stats_failed": "❌ No se pudo crear el informe eléctrico.",
         "stats_usage": "Uso: /stats [day|week|month] (o /stats_day, /stats_week, /stats_month)",
         "stats_empty": "📭 Aún no hay suficientes datos para este período.",
+        "live_stopped": "⏸ Actualizaciones del estado detenidas.",
+        "live_replaced": "⏸ Este estado está inactivo; hay un mensaje más reciente.",
+        "live_pin_failed": "El estado se actualiza. Si el mensaje no está fijado, puedes fijarlo manualmente.",
+        "live_failed": "❌ No se pudo actualizar el estado. Inténtalo de nuevo.",
     },
     "de": {
         "start": "✅ Netz- und Batteriemeldungen aktiviert.\n/status — Zustand; /stats day, /stats week oder /stats month — Berichte auf Anfrage; /lang — Sprache.\nAutomatische Berichte separat mit /stats_auto_on aktivieren; /stats_auto_off — deaktivieren.",
@@ -96,6 +108,10 @@ MESSAGES = {
         "stats_failed": "❌ Strombericht konnte nicht erstellt werden.",
         "stats_usage": "Verwendung: /stats [day|week|month] (oder /stats_day, /stats_week, /stats_month)",
         "stats_empty": "📭 Noch nicht genug Daten für diesen Zeitraum.",
+        "live_stopped": "⏸ Statusaktualisierungen gestoppt.",
+        "live_replaced": "⏸ Dieser Status ist inaktiv; eine neuere Nachricht hat ihn ersetzt.",
+        "live_pin_failed": "Der Status wird aktualisiert. Falls die Nachricht nicht angeheftet ist, können Sie sie manuell anheften.",
+        "live_failed": "❌ Status konnte nicht aktualisiert werden. Bitte erneut versuchen.",
     },
 }
 

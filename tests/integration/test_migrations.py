@@ -22,6 +22,7 @@ from sqlalchemy.pool import NullPool
 from support import IsolatedTestConfig, local_test_database_url
 
 from deye_notifier.database import chats as chat_repository
+from deye_notifier.database import live_status as live_repository
 from deye_notifier.database import migrations as db_migrations
 from deye_notifier.database import monitor as state_repository
 from deye_notifier.database import notifications as notification_repository
@@ -72,7 +73,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
     async def test_fresh_database_and_repeat_upgrade(self):
         await self.migrate()
         await self.migrate()
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0007_charge_power",)])
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0008_live_status",)])
         tables = await self.sql("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
         self.assertEqual(
             {row[0] for row in tables},
@@ -83,8 +84,49 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
                 "schedule_cache",
                 "telemetry_samples",
                 "alembic_version",
+                "live_status_messages",
             },
         )
+
+    async def test_live_message_migration_preferences_replacement_and_guarded_downgrade(self):
+        await self.migrate("0007_charge_power")
+        await self.sql(
+            "INSERT INTO chats (chat_id, language, notifications_enabled, stats_enabled) VALUES (123, 'de', TRUE, TRUE)"
+        )
+        await self.migrate()
+        url = local_test_database_url(os.environ["TEST_POSTGRES_DSN"])
+
+        async def setup(connection):
+            await connection.execute(f"SET search_path TO {self.schema}")
+
+        pool = await asyncpg.create_pool(
+            **url.translate_connect_args(username="user"), min_size=1, max_size=1, setup=setup
+        )
+        try:
+            await live_repository.ensure_preferences(pool, 123, "uk")
+            await live_repository.ensure_preferences(pool, 456, "uk")
+            await live_repository.save_entry(pool, 123, 100)
+            await live_repository.save_entry(pool, 123, 101)
+            await live_repository.save_entry(pool, 456, 200)
+            self.assertEqual((await live_repository.get_entry(pool, 123))["message_id"], 101)
+            self.assertEqual(len(await live_repository.get_entries(pool)), 2)
+            self.assertEqual(await chat_repository.get_chat_language(pool, 123), "de")
+            self.assertEqual(await chat_repository.get_chats(pool), [(123, "de")])
+            self.assertEqual(await chat_repository.get_chats(pool, stats_only=True), [(123, "de")])
+            await live_repository.delete_entry(
+                pool, 123, 100
+            )  # An old updater cannot remove its replacement.
+            self.assertIsNotNone(await live_repository.get_entry(pool, 123))
+            await chat_repository.remove_chat(pool, 456)
+            self.assertIsNone(await live_repository.get_entry(pool, 456))
+        finally:
+            await pool.close()
+        with self.assertRaisesRegex(RuntimeError, "active live status preferences"):
+            await self.migrate("0007_charge_power", downgrade=True)
+        await self.migrate("0007_charge_power", downgrade=True, x=["allow_data_loss=true"])
+        self.assertEqual(await self.sql("SELECT count(*) FROM chats"), [(1,)])
+        await self.migrate()
+        self.assertEqual(await self.sql("SELECT count(*) FROM live_status_messages"), [(0,)])
 
     async def test_old_unversioned_database_preserves_subscribers_and_time(self):
         await self.sql(
@@ -239,7 +281,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "subscription preferences"):
             await self.migrate("0002_reports", downgrade=True)
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0007_charge_power",)])
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0008_live_status",)])
         await self.migrate("0002_reports", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(await self.sql("SELECT chat_id FROM chats"), [(123,)])
 
@@ -270,7 +312,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "allow_data_loss"):
             await self.migrate("0001_legacy", downgrade=True)
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0007_charge_power",)])
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0008_live_status",)])
         self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
         await self.migrate("0001_legacy", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(
@@ -286,10 +328,10 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         with TemporaryDirectory() as directory:
             scripts = Path(directory) / "migrations"
             shutil.copytree(db_migrations.ROOT / "migrations", scripts)
-            (scripts / "versions" / "0008_failure.py").write_text(
+            (scripts / "versions" / "0009_failure.py").write_text(
                 "from alembic import op\n"
-                "revision = '0008_failure'\n"
-                "down_revision = '0007_charge_power'\n"
+                "revision = '0009_failure'\n"
+                "down_revision = '0008_live_status'\n"
                 "def upgrade():\n"
                 "    op.execute('CREATE TABLE migration_should_rollback (id INTEGER)')\n"
                 "    raise RuntimeError('synthetic migration failure')\n"

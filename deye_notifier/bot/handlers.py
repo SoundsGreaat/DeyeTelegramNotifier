@@ -11,9 +11,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from deye_notifier import statistics
 from deye_notifier.bot import locales
+from deye_notifier.bot.status import render_status
 from deye_notifier.config import Settings
 from deye_notifier.database import chats as chat_repository
 from deye_notifier.services import reports
+from deye_notifier.services.live_status import NoTelemetryError
 from deye_notifier.services.schedules import YasnoScheduleProvider
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,9 @@ async def cmd_start(message: types.Message, pool: asyncpg.Pool):
     await message.answer(locales.get_message(user_lang, "start"))
 
 
-async def cmd_stop(message: types.Message, pool: asyncpg.Pool):
+async def cmd_stop(message: types.Message, pool: asyncpg.Pool, live_status_service=None):
+    if live_status_service is not None:
+        await live_status_service.stop(message.chat.id)
     await chat_repository.unsubscribe_chat(pool, message.chat.id)
     user_lang = (
         message.from_user.language_code if message.from_user.language_code in locales.LANGUAGES else "en"
@@ -90,48 +94,16 @@ async def cmd_status(
     if snapshot is None:
         await wait_msg.edit_text(locales.get_message(user_lang, "connection_failed"))
         return
-    grid_v, battery_soc, load_watts = snapshot.grid_voltage, snapshot.battery_soc, snapshot.load_watts
-    is_online = snapshot.is_grid_online
-    grid_status_text = locales.get_message(user_lang, "online" if is_online else "offline")
-    forecast_action, forecast_text = schedule_provider.next_event_for_state(is_online)
-    forecast_line = locales.get_forecast_line(user_lang, forecast_action, forecast_text)
-    charge_estimate = monitor.charging_estimate()
-    is_charging = snapshot.is_charging or charge_estimate.is_charging
-    show_runtime = (
-        not is_charging
-        and settings.has_meaningful_load(load_watts)
-        and (not is_online or snapshot.is_discharging)
-    )
-
-    text = locales.get_message(
+    forecast_action, forecast_text = schedule_provider.next_event_for_state(snapshot.is_grid_online)
+    text = render_status(
         user_lang,
-        "status",
-        grid_status=grid_status_text,
-        voltage=grid_v,
-        voltage_line=locales.get_voltage_line(user_lang, grid_v) if is_online else "",
-        battery=battery_soc,
-        load=load_watts,
-        state_duration_line=locales.get_state_duration_line(
-            user_lang,
-            is_online,
-            (datetime.now(timezone.utc) - monitor.last_status_time).total_seconds(),
-        ),
-        runtime_line=locales.get_runtime_line(
-            user_lang,
-            battery_soc,
-            load_watts,
-            settings.battery_capacity_kwh,
-            snapshot.cutoff_soc(settings),
-            settings.battery_inverter_efficiency,
-            runtime_seconds=snapshot.runtime_seconds(settings),
-        )
-        if show_runtime
-        else "",
-        charge_power_line=locales.get_charge_power_line(user_lang, snapshot.charge_power_watts),
-        charge_time_line=locales.get_charge_time_line(user_lang, charge_estimate.seconds_remaining)
-        if is_charging and battery_soc < 100
-        else "",
-        forecast_line=forecast_line,
+        snapshot,
+        settings,
+        state_since=monitor.last_status_time,
+        charge_estimate=monitor.charging_estimate(),
+        now=datetime.now(timezone.utc),
+        forecast_action=forecast_action,
+        forecast_text=forecast_text,
     )
 
     await wait_msg.edit_text(text, parse_mode=ParseMode.HTML)
@@ -158,6 +130,32 @@ async def cmd_stats(message: types.Message, pool: asyncpg.Pool, command: Command
     await wait_msg.edit_text(text, parse_mode=ParseMode.HTML)
 
 
+async def cmd_live(message: types.Message, pool: asyncpg.Pool, live_status_service):
+    language = getattr(message.from_user, "language_code", "en")
+    try:
+        pinned = await live_status_service.enable(message.chat.id, language)
+        if not pinned:
+            language = await chat_repository.get_chat_language(pool, message.chat.id)
+            await message.answer(locales.get_message(language, "live_pin_failed"))
+    except NoTelemetryError:
+        language = await chat_repository.get_chat_language(pool, message.chat.id)
+        await message.answer(locales.get_message(language, "connection_failed"))
+    except Exception:
+        logger.exception("Could not enable live status")
+        language = await chat_repository.get_chat_language(pool, message.chat.id)
+        await message.answer(locales.get_message(language, "live_failed"))
+
+
+async def cmd_live_off(message: types.Message, pool: asyncpg.Pool, live_status_service):
+    language = await chat_repository.get_chat_language(pool, message.chat.id)
+    try:
+        await live_status_service.stop(message.chat.id)
+        await message.answer(locales.get_message(language, "live_stopped"))
+    except Exception:
+        logger.exception("Could not stop live status")
+        await message.answer(locales.get_message(language, "live_failed"))
+
+
 def create_router():
     router = Router()
     router.message.register(cmd_start, Command("start"))
@@ -166,5 +164,7 @@ def create_router():
     router.message.register(cmd_lang, Command("lang", "language"))
     router.callback_query.register(callback_lang, F.data.startswith("lang_"))
     router.message.register(cmd_status, Command("status"))
+    router.message.register(cmd_live, Command("live"))
+    router.message.register(cmd_live_off, Command("live_off"))
     router.message.register(cmd_stats, Command("stats", "stats_day", "stats_week", "stats_month"))
     return router
