@@ -1,91 +1,92 @@
 # Deye Inverter Telegram Notifier
 
-A Telegram bot that monitors the status of a Deye hybrid inverter using the Solarman V5 protocol and sends asynchronous notifications to subscribed users when the power source changes (Grid vs Battery).
+A Telegram bot for monitoring a Deye hybrid inverter over the Solarman V5 protocol.
 
 ## Features
 
-- **Real-time Monitoring**: Checks inverter status periodically.
-- **Telegram Notifications**: Alerts subscribed users about power outages and restoration.
-- **Multi-user Support**: Users can subscribe/unsubscribe via the bot.
-- **Database Storage**: Uses PostgreSQL to store subscriber data persistently.
-- **Optional Schedule Forecasts**: Provider-specific address lookup and next-change forecasts can be enabled without affecting worldwide deployments.
-- **Dockerized**: Easy deployment with Docker and Docker Compose.
+- Power outage and restoration alerts, including how long the previous state lasted.
+- Battery charging and discharging notifications at 25% milestones.
+- Live status with load, battery level, grid-state duration, and estimated battery runtime.
+- Daily, weekly, and monthly electricity reports, on demand or by subscription.
+- Persistent telemetry and subscriptions in PostgreSQL.
+- English, Ukrainian, Spanish, and German messages.
+- Optional outage schedule forecasts and Docker Compose deployment.
 
-## Prerequisites
+## Setup
 
-- Docker
-- Docker Compose
-- A Telegram Bot Token (obtained from [@BotFather](https://t.me/BotFather))
-- Deye Inverter IP address and Logger Serial Number
+You need Docker Compose, a Telegram bot token from [BotFather](https://t.me/BotFather), and the inverter's IP address and logger serial number.
 
-## Configuration
-
-1. Clone this repository.
-2. Create a `.env` file in the root directory with the following variables:
+Create `.env` from [.env.example](.env.example) and set:
 
 ```ini
-# Inverter Settings
 INVERTER_IP=192.168.1.151
 LOGGER_SERIAL=1234567890
-CHECK_INTERVAL=10  # Seconds between checks
-
-# Telegram Settings
 TELEGRAM_TOKEN=your_telegram_bot_token
-
-# Logging
-LOG_LEVEL=INFO
-
-# Optional schedule forecast (disabled unless SCHEDULE_PROVIDER is set)
-# Leave these empty for a provider-agnostic worldwide deployment.
-SCHEDULE_PROVIDER=
-SCHEDULE_REGION_ID=
-SCHEDULE_DSO_ID=
-SCHEDULE_CITY_ID=
-SCHEDULE_STREET=
-SCHEDULE_HOUSE=
-SCHEDULE_TIMEZONE=UTC
-SCHEDULE_REFRESH_INTERVAL=600
-SCHEDULE_REQUEST_TIMEOUT=4
-
-# Database Settings (optional, defaults provided in docker-compose)
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=deye_bot
 ```
 
-## Running the Application
+For battery runtime estimates, set `BATTERY_CAPACITY_KWH` to the total nominal battery capacity and `BATTERY_CUTOFF_SOC` to the shutdown percentage configured on the inverter. Adjust `BATTERY_INVERTER_EFFICIENCY` if needed. A capacity of `0` disables the estimate. These settings do not reconfigure the inverter.
 
-Start the services using Docker Compose:
+Report settings:
+
+| Setting | Purpose |
+| --- | --- |
+| `STATS_TIMEZONE` | Calendar/report timezone, for example `Europe/Kyiv`. Defaults to UTC if unset. |
+| `STATS_REPORT_HOUR` | Local delivery hour, from 0 to 23. Defaults to 9. |
+| `STATS_AUTO_REPORTS` | Global availability of automatic reports. Each chat must subscribe separately. |
+
+Optional schedule forecasts use the `SCHEDULE_*` settings in `.env.example`. Leave `SCHEDULE_PROVIDER` empty to disable them.
+
+Start or update the application:
 
 ```bash
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
-This will start two containers:
-- `deye_monitor`: The Python application and Telegram bot.
-- `deye_postgres`: The PostgreSQL database.
-
-To view logs:
+View logs or stop the services:
 
 ```bash
-docker-compose logs -f
+docker compose logs -f deye-monitor
+docker compose down
 ```
 
-To stop the application:
+PostgreSQL data is stored in the `postgres_data` volume. Keep that volume across updates.
+
+## Bot commands
+
+The bot registers its command menu with English descriptions at startup.
+
+| Command | Action |
+| --- | --- |
+| `/start` | Enable power and battery notifications. |
+| `/stop` | Disable all notifications and automatic reports. |
+| `/status` | Show live inverter status and estimated battery runtime. |
+| `/stats` or `/stats day` or `/stats_day` | Today's electricity report. |
+| `/stats week` or `/stats_week` | This week's report, starting Monday. |
+| `/stats month` or `/stats_month` | This month's report, starting on the first day. |
+| `/stats_auto_on` | Subscribe to automatic daily, weekly, and monthly reports. |
+| `/stats_auto_off` | Disable automatic reports. |
+| `/lang` | Choose the language of bot messages. |
+
+`/start` does not enable automatic reports. Report subscriptions are independent of power alerts, so `/stats_auto_on` can also be used on its own.
+
+Automatic reports cover the previous day, previous week, or previous month and are sent at `STATS_REPORT_HOUR` in `STATS_TIMEZONE`.
+
+Reports include estimated consumption, average and peak load, grid availability, observed outages, battery range, and data coverage. Missing readings remain unknown. Battery runtime is an estimate based on the current load and usable battery reserve.
+
+## Database migrations
+
+Alembic manages the database schema and applies pending migrations before the bot starts. Set `DB_AUTO_MIGRATE=false` if migrations are applied separately during deployment.
+
+See [MIGRATIONS.md](MIGRATIONS.md) for upgrade, rollback, and revision-authoring instructions.
+
+## Tests
+
+Install `requirements.txt`, then run:
 
 ```bash
-docker-compose down
+python -m unittest discover -s tests -v
 ```
 
-## Bot Commands
+Tests use synthetic data and mocked Telegram/inverter connections. PostgreSQL integration tests require an explicit `TEST_POSTGRES_DSN` pointing to a local database named `deye_test`; otherwise they are skipped.
 
-- `/start` - Subscribe to status notifications.
-- `/stop` - Unsubscribe from notifications.
-
-## Technical Details
-
-The application uses:
-- `aiogram` for the asynchronous Telegram bot.
-- `pysolarmanv5` for communicating with the Deye inverter.
-- `asyncpg` for asynchronous PostgreSQL database interaction.
-- `docker-compose` for orchestration.
+GitHub Actions runs the full suite on pushes and pull requests using Python 3.11 and a disposable PostgreSQL 17 service. No production credentials or `.env` file are required.
