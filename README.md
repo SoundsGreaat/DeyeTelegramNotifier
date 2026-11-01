@@ -6,7 +6,7 @@ A Telegram bot for monitoring a Deye hybrid inverter over the Solarman V5 protoc
 
 - Power outage and restoration alerts, including how long the previous state lasted.
 - Battery charging and discharging notifications at 25% milestones.
-- Live status with load, battery level, grid-state duration, and estimated battery runtime.
+- Live status with load, battery level, grid-state duration, battery runtime, and estimated time to full charge.
 - Daily, weekly, and monthly electricity reports, on demand or by subscription.
 - Persistent telemetry and subscriptions in PostgreSQL.
 - English, Ukrainian, Spanish, and German messages.

@@ -2,12 +2,13 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from deye_notifier.database import monitor as state_repository
 from deye_notifier.database import notifications as notification_repository
 from deye_notifier.database import telemetry
 from deye_notifier.database.connection import db_retry
+from deye_notifier.inverter.charging import ChargeEstimator
 from deye_notifier.inverter.client import VOLTAGE_THRESHOLD, InverterClient
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ class DeyeStatusMonitor:
         self.running = True
         self.last_status_time = datetime.now(timezone.utc)
         self.check_lock = asyncio.Lock()
+        self.charge_estimator = ChargeEstimator(max_gap_seconds=settings.stats_max_gap_seconds)
+        self._charge_history_loaded = False
 
     def format_duration(self, delta):
         total_seconds = int(delta.total_seconds())
@@ -60,7 +63,30 @@ class DeyeStatusMonitor:
             level=kwargs.get("level"),
             threshold=kwargs.get("threshold"),
             forecast_text=kwargs.get("forecast_text", ""),
+            charge_eta_seconds=kwargs.get("charge_eta_seconds"),
         )
+
+    def charging_estimate(self):
+        return self.charge_estimator.estimate(datetime.now(timezone.utc))
+
+    async def _observe_charge(self, now, battery_soc):
+        if not self._charge_history_loaded:
+            self._charge_history_loaded = True
+            try:
+                rows = await db_retry(
+                    self.pool,
+                    lambda: telemetry.fetch_samples(
+                        self.pool,
+                        now - timedelta(seconds=self.charge_estimator.window_seconds),
+                        now,
+                    ),
+                )
+                for row in rows:
+                    if row["observed_at"] < now and row["battery_soc"] is not None:
+                        self.charge_estimator.observe(row["observed_at"], row["battery_soc"])
+            except Exception:
+                logger.warning("Could not load charging history; collecting new observations")
+        self.charge_estimator.observe(now, battery_soc)
 
     def read_inverter(self):
         return self.client.read_status()
@@ -86,6 +112,7 @@ class DeyeStatusMonitor:
             logger.warning("Ignoring invalid inverter telemetry: SOC=%s load=%s", battery_soc, load_watts)
             return
         now = datetime.now(timezone.utc)
+        await self._observe_charge(now, battery_soc)
         currently_online = (grid_v > VOLTAGE_THRESHOLD) and (current_mode != 300)
 
         if self.is_grid_online is None:
@@ -111,6 +138,7 @@ class DeyeStatusMonitor:
                         duration,
                         forecast_action,
                         forecast_text,
+                        battery_soc=battery_soc,
                     )
                     self.is_grid_online = currently_online
                     self.last_status_time = now
@@ -130,6 +158,7 @@ class DeyeStatusMonitor:
                 duration,
                 forecast_action,
                 forecast_text,
+                battery_soc=battery_soc,
             )
             self.last_status_time = now
             self.is_grid_online = currently_online
@@ -151,7 +180,15 @@ class DeyeStatusMonitor:
         # Several crossed milestones share the same current SOC. Report the
         # latest one once, with full/low battery taking precedence on a jump.
         for key, threshold in events[-1:]:
-            await self.broadcast(key, level=battery_soc, threshold=threshold)
+            await self.broadcast(
+                key,
+                level=battery_soc,
+                threshold=threshold,
+                load=load_watts,
+                charge_eta_seconds=self.charge_estimator.estimate(now).seconds_remaining
+                if key == "battery_charging"
+                else None,
+            )
         self.last_battery_soc = battery_soc
         return grid_v, current_mode, battery_soc, load_watts
 

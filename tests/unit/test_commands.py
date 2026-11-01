@@ -9,6 +9,7 @@ from support import IsolatedTestConfig
 
 from deye_notifier.bot import handlers, locales
 from deye_notifier.database import chats as chat_repository
+from deye_notifier.inverter.charging import ChargingEstimate
 
 
 class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
@@ -18,6 +19,7 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         monitor = SimpleNamespace(
             check=AsyncMock(return_value=(230, 0, 80, 1000)),
             last_status_time=datetime.now(timezone.utc) - timedelta(hours=2),
+            charging_estimate=lambda: ChargingEstimate(False, None),
         )
         provider = SimpleNamespace(next_event_for_state=lambda _: ("", ""))
         with patch.object(chat_repository, "get_chat_language", AsyncMock(return_value="uk")):
@@ -34,6 +36,26 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
                 message, None, CommandObject(command="stats", args="year"), self.settings
             )
         message.answer.assert_awaited_once_with(locales.get_message("uk", "stats_usage"))
+
+    async def test_status_shows_time_to_full_charge_while_charging(self):
+        wait = SimpleNamespace(edit_text=AsyncMock())
+        message = SimpleNamespace(chat=SimpleNamespace(id=123), answer=AsyncMock(return_value=wait))
+        monitor = SimpleNamespace(
+            check=AsyncMock(return_value=(230, 0, 80, 1000)),
+            last_status_time=datetime.now(timezone.utc),
+            charging_estimate=lambda: ChargingEstimate(True, 1800),
+        )
+        with patch.object(chat_repository, "get_chat_language", AsyncMock(return_value="uk")):
+            await handlers.cmd_status(
+                message,
+                None,
+                SimpleNamespace(next_event_for_state=lambda _: ("", "")),
+                monitor,
+                self.settings,
+            )
+        text = wait.edit_text.await_args.args[0]
+        self.assertIn("До 100%: приблизно 30хв", text)
+        self.assertIn("5г 24хв", text)
 
     def message(self):
         return SimpleNamespace(

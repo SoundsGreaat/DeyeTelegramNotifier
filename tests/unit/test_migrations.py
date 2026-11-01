@@ -19,7 +19,8 @@ class MigrationConfigurationTests(IsolatedTestConfig, unittest.TestCase):
     def test_linear_revision_history_and_offline_upgrade(self):
         config = db_migrations.migration_config(self.settings)
         script = ScriptDirectory.from_config(config)
-        self.assertEqual(script.get_heads(), ["0004_language_cleanup"])
+        self.assertEqual(script.get_heads(), ["0005_battery_eta"])
+        self.assertEqual(script.get_revision("0005_battery_eta").down_revision, "0004_language_cleanup")
         self.assertEqual(script.get_revision("0004_language_cleanup").down_revision, "0003_subscriptions")
         self.assertEqual(script.get_revision("0003_subscriptions").down_revision, "0002_reports")
         self.assertEqual(script.get_revision("0002_reports").down_revision, "0001_legacy")
@@ -63,6 +64,7 @@ class MigrationConfigurationTests(IsolatedTestConfig, unittest.TestCase):
             ("0001_legacy",),
             ("0002_reports",),
             ("0003_subscriptions",),
+            ("0004_language_cleanup",),
             ("future_revision",),
         ):
             with patch.object(

@@ -16,6 +16,40 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
         super().setUp()
         self.bot = SimpleNamespace(send_message=AsyncMock())
 
+    async def test_battery_messages_include_the_appropriate_estimate(self):
+        cases = (
+            ("battery_charging", 1800, "To 100%: about 30m"),
+            ("battery_discharging", None, "Estimated runtime to 20%: 4h 57m"),
+            ("battery_low", None, "Estimated runtime to 20%: 4h 57m"),
+            ("warning_battery", None, "Estimated runtime to 20%: 4h 57m"),
+        )
+        for key, seconds, expected in cases:
+            event = dict(
+                id=1,
+                message_key=key,
+                voltage=0,
+                load_watts=1000,
+                duration="1h",
+                level=75,
+                threshold=75,
+                forecast_action="",
+                forecast_text="",
+                report_payload=None,
+                charge_eta_seconds=seconds,
+            )
+            with (
+                self.subTest(message=key),
+                patch.object(
+                    notification_repository, "get_pending_notifications", AsyncMock(return_value=[event])
+                ),
+                patch.object(chat_repository, "get_chats", AsyncMock(return_value=[(123, "en")])),
+                patch.object(notification_repository, "mark_notification_delivered", AsyncMock()),
+            ):
+                service = NotificationService(None, self.bot, self.settings)
+                await service.deliver_pending()
+            self.assertIn(expected, self.bot.send_message.await_args.args[1])
+            self.assertNotIn("Usable reserve", self.bot.send_message.await_args.args[1])
+
     async def test_report_delivery_formats_saved_payload_for_chat_language(self):
         monitor = NotificationService(None, self.bot, self.settings)
         event = dict(

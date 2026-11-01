@@ -55,6 +55,15 @@ class FormattingTests(IsolatedTestConfig, unittest.TestCase):
 
 
 class MessageCopyTests(IsolatedTestConfig, unittest.TestCase):
+    def test_charge_estimates_are_localized_and_do_not_claim_unknown_times(self):
+        for language in locales.LANGUAGES:
+            known = locales.get_charge_time_line(language, 1800)
+            unknown = locales.get_charge_time_line(language, None)
+            self.assertIn(locales.format_duration(1800, language), known)
+            self.assertIn("100%", unknown)
+            self.assertNotEqual(known, unknown)
+            self.assertNotIn("(", known)
+
     def test_battery_messages_show_current_level_only_once(self):
         for language in locales.LANGUAGES:
             for key in ("battery_charging", "battery_discharging", "battery_low"):

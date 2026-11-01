@@ -11,6 +11,10 @@ from deye_notifier.inverter.monitor import DeyeStatusMonitor
 
 
 class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(patch.object(telemetry, "fetch_samples", AsyncMock(return_value=[])))
+
     def test_charging_crosses_all_milestones_and_full(self):
         self.assertEqual(
             DeyeStatusMonitor.battery_events(20, 100),
@@ -73,7 +77,13 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         monitor.broadcast = AsyncMock()
         with patch.object(telemetry, "record_sample", AsyncMock()):
             await monitor.check()
-        monitor.broadcast.assert_awaited_once_with("battery_full", level=100, threshold=100)
+        monitor.broadcast.assert_awaited_once_with(
+            "battery_full",
+            level=100,
+            threshold=100,
+            load=1000,
+            charge_eta_seconds=None,
+        )
 
     async def test_transition_is_persisted_before_new_duration(self):
         monitor = DeyeStatusMonitor(
@@ -91,3 +101,36 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result, (0, 300, 60, 600))
             self.assertFalse(monitor.is_grid_online)
             self.assertEqual(monitor.last_status_time, transition.await_args.args[2])
+            self.assertEqual(transition.await_args.kwargs["battery_soc"], 60)
+
+    async def test_saved_soc_history_restores_charge_estimate_after_restart(self):
+        now = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+        history = [
+            {"observed_at": now - timedelta(minutes=5 - index), "battery_soc": 70 + index}
+            for index in range(5)
+        ]
+        monitor = DeyeStatusMonitor(None, None, self.settings)
+        with patch.object(telemetry, "fetch_samples", AsyncMock(return_value=history)) as fetch:
+            await monitor._observe_charge(now, 75)
+            forecast = monitor.charge_estimator.estimate(now)
+            self.assertTrue(forecast.is_charging)
+            self.assertAlmostEqual(forecast.seconds_remaining, 25 * 60)
+            await monitor._observe_charge(now + timedelta(seconds=10), 75)
+        fetch.assert_awaited_once()
+
+    async def test_charging_event_captures_current_load_and_eta(self):
+        now = datetime.now(timezone.utc)
+        monitor = DeyeStatusMonitor(None, None, self.settings)
+        monitor.is_grid_online = True
+        monitor.last_battery_soc = 74
+        monitor._charge_history_loaded = True
+        for offset, soc in ((150, 72), (100, 73), (50, 74)):
+            monitor.charge_estimator.observe(now - timedelta(seconds=offset), soc)
+        monitor.read_inverter = Mock(return_value=(230, 0, 75, 1000))
+        monitor.broadcast = AsyncMock()
+        with patch.object(telemetry, "record_sample", AsyncMock()):
+            await monitor.check()
+        event = monitor.broadcast.await_args
+        self.assertEqual(event.args[0], "battery_charging")
+        self.assertEqual(event.kwargs["load"], 1000)
+        self.assertAlmostEqual(event.kwargs["charge_eta_seconds"], 25 * 50, delta=1)

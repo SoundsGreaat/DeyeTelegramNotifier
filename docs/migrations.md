@@ -25,6 +25,7 @@ The current chain is:
 | `0002_reports` | Add telemetry, battery thresholds and report queue fields; convert monitor state timestamps to timezone-aware values. |
 | `0003_subscriptions` | Separate power/battery subscriptions from automatic reports; existing users keep alerts and must explicitly opt in to reports. |
 | `0004_language_cleanup` | Switch saved Russian language preferences to English without changing subscriptions. |
+| `0005_battery_eta` | Preserve charging time estimates with queued battery notifications. |
 
 Both a fresh database and the project's known unversioned schemas can run `upgrade head`. The adoption revisions use conditional, additive SQL and preserve existing rows. Already timezone-aware values are left unchanged. There is no need to run `stamp`; stamping an unverified database would bypass the actual migrations.
 

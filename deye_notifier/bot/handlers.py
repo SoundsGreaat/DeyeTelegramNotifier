@@ -96,6 +96,7 @@ async def cmd_status(
     grid_status_text = locales.get_message(user_lang, "online" if is_online else "offline")
     forecast_action, forecast_text = schedule_provider.next_event_for_state(is_online)
     forecast_line = locales.get_forecast_line(user_lang, forecast_action, forecast_text)
+    charge_estimate = monitor.charging_estimate()
 
     text = locales.get_message(
         user_lang,
@@ -117,6 +118,9 @@ async def cmd_status(
             settings.battery_cutoff_soc,
             settings.battery_inverter_efficiency,
         ),
+        charge_time_line=locales.get_charge_time_line(user_lang, charge_estimate.seconds_remaining)
+        if charge_estimate.is_charging
+        else "",
         forecast_line=forecast_line,
     )
 

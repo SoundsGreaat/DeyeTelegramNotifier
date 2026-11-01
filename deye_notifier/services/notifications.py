@@ -50,6 +50,23 @@ class NotificationService:
                         event["forecast_text"] or "",
                     ),
                 }
+                if (
+                    event["message_key"] in {"battery_discharging", "battery_low", "warning_battery"}
+                    and event["level"] is not None
+                ):
+                    kwargs["runtime_line"] = locales.get_runtime_line(
+                        language,
+                        event["level"],
+                        event["load_watts"],
+                        self.settings.battery_capacity_kwh,
+                        self.settings.battery_cutoff_soc,
+                        self.settings.battery_inverter_efficiency,
+                        include_energy=False,
+                    )
+                if event["message_key"] == "battery_charging":
+                    kwargs["charge_time_line"] = locales.get_charge_time_line(
+                        language, event["charge_eta_seconds"]
+                    )
                 if event["report_payload"]:
                     payload = event["report_payload"]
                     if isinstance(payload, str):

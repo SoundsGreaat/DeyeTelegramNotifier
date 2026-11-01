@@ -23,6 +23,8 @@ from support import IsolatedTestConfig, local_test_database_url
 
 from deye_notifier.database import chats as chat_repository
 from deye_notifier.database import migrations as db_migrations
+from deye_notifier.database import monitor as state_repository
+from deye_notifier.database import notifications as notification_repository
 
 
 @unittest.skipUnless(os.getenv("TEST_POSTGRES_DSN"), "TEST_POSTGRES_DSN is not configured")
@@ -69,9 +71,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
     async def test_fresh_database_and_repeat_upgrade(self):
         await self.migrate()
         await self.migrate()
-        self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0004_language_cleanup",)]
-        )
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0005_battery_eta",)])
         tables = await self.sql("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
         self.assertEqual(
             {row[0] for row in tables},
@@ -173,6 +173,50 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         finally:
             await pool.close()
 
+    async def test_battery_forecasts_survive_queue_persistence_and_old_rows(self):
+        await self.migrate("0004_language_cleanup")
+        await self.sql(
+            "INSERT INTO notification_queue (message_key, level) VALUES ('battery_discharging', 75)"
+        )
+        await self.migrate()
+        self.assertEqual(await self.sql("SELECT charge_eta_seconds FROM notification_queue"), [(None,)])
+        url = local_test_database_url(os.environ["TEST_POSTGRES_DSN"])
+
+        async def setup(connection):
+            await connection.execute(f"SET search_path TO {self.schema}")
+
+        pool = await asyncpg.create_pool(
+            **url.translate_connect_args(username="user"), min_size=1, max_size=1, setup=setup
+        )
+        try:
+            await notification_repository.enqueue_notification(
+                pool,
+                "battery_charging",
+                level=75,
+                load=1000,
+                charge_eta_seconds=1800,
+            )
+            events = await notification_repository.get_pending_notifications(pool)
+            self.assertEqual(events[-1]["charge_eta_seconds"], 1800)
+            self.assertEqual(events[-1]["load_watts"], 1000)
+            await state_repository.record_transition(
+                pool,
+                False,
+                datetime.now(timezone.utc),
+                0,
+                1000,
+                "1h",
+                battery_soc=75,
+            )
+            events = await notification_repository.get_pending_notifications(pool)
+            self.assertEqual(events[-1]["message_key"], "warning_battery")
+            self.assertEqual((events[-1]["level"], events[-1]["load_watts"]), (75, 1000))
+        finally:
+            await pool.close()
+        await self.migrate("0004_language_cleanup", downgrade=True)
+        self.assertEqual(await self.sql("SELECT count(*) FROM notification_queue"), [(3,)])
+        await self.migrate()
+
     async def test_subscription_downgrade_requires_consent_and_does_not_enable_alerts(self):
         await self.migrate()
         await self.sql(
@@ -180,9 +224,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "subscription preferences"):
             await self.migrate("0002_reports", downgrade=True)
-        self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0004_language_cleanup",)]
-        )
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0005_battery_eta",)])
         await self.migrate("0002_reports", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(await self.sql("SELECT chat_id FROM chats"), [(123,)])
 
@@ -213,9 +255,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "allow_data_loss"):
             await self.migrate("0001_legacy", downgrade=True)
-        self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0004_language_cleanup",)]
-        )
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0005_battery_eta",)])
         self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
         await self.migrate("0001_legacy", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(
@@ -231,10 +271,10 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         with TemporaryDirectory() as directory:
             scripts = Path(directory) / "migrations"
             shutil.copytree(db_migrations.ROOT / "migrations", scripts)
-            (scripts / "versions" / "0005_failure.py").write_text(
+            (scripts / "versions" / "0006_failure.py").write_text(
                 "from alembic import op\n"
-                "revision = '0005_failure'\n"
-                "down_revision = '0004_language_cleanup'\n"
+                "revision = '0006_failure'\n"
+                "down_revision = '0005_battery_eta'\n"
                 "def upgrade():\n"
                 "    op.execute('CREATE TABLE migration_should_rollback (id INTEGER)')\n"
                 "    raise RuntimeError('synthetic migration failure')\n"

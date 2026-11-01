@@ -1,5 +1,6 @@
 """Localized Telegram messages and formatting helpers."""
 
+import math
 from datetime import timezone
 
 MESSAGES = {
@@ -11,13 +12,13 @@ MESSAGES = {
         "stats_auto_paused": "Automatic reports are currently paused in the bot settings. Your subscription is saved.",
         "select_lang": "Please select your language:",
         "lang_set": "✅ Language set to English.",
-        "warning_battery": "⚠️ <b>Warning: Battery Power</b>\nGrid voltage: {voltage}V\nLoad: {load}W\nOnline duration: {duration}{forecast_line}",
+        "warning_battery": "⚠️ <b>Warning: Battery Power</b>\nGrid voltage: {voltage}V\nLoad: {load}W\nOnline duration: {duration}{runtime_line}{forecast_line}",
         "power_restored": "✅ <b>Power Restored</b>\nGrid voltage: {voltage}V\nOffline duration: {duration}{forecast_line}",
         "battery_full": "🔋 <b>Battery Fully Charged</b>\nLevel: 100%",
-        "battery_charging": "📈 <b>Battery Charging</b>\nLevel: {level}%",
-        "battery_discharging": "📉 <b>Battery Discharging</b>\nLevel: {level}%",
-        "battery_low": "⚠️ <b>Battery Low</b>\nLevel: {level}%",
-        "status": "📊 <b>System Status</b>\nGrid: {grid_status}\nVoltage: {voltage}V\nLoad: {load}W\nBattery: {battery}%{state_duration_line}{runtime_line}{forecast_line}",
+        "battery_charging": "📈 <b>Battery Charging</b>\nLevel: {level}%{charge_time_line}",
+        "battery_discharging": "📉 <b>Battery Discharging</b>\nLevel: {level}%{runtime_line}",
+        "battery_low": "⚠️ <b>Battery Low</b>\nLevel: {level}%{runtime_line}",
+        "status": "📊 <b>System Status</b>\nGrid: {grid_status}\nVoltage: {voltage}V\nLoad: {load}W\nBattery: {battery}%{state_duration_line}{runtime_line}{charge_time_line}{forecast_line}",
         "online": "Online 🟢",
         "offline": "Offline 🔴",
         "connection_failed": "❌ Connection failed",
@@ -34,13 +35,13 @@ MESSAGES = {
         "stats_auto_paused": "Автозвіти зараз призупинені в налаштуваннях бота. Вашу підписку збережено.",
         "select_lang": "Будь ласка, оберіть вашу мову:",
         "lang_set": "✅ Мову змінено на Українську.",
-        "warning_battery": "⚠️ <b>Увага: Живлення від батареї</b>\nНапруга мережі: {voltage}В\nНавантаження: {load}Вт\nСвітло було: {duration}{forecast_line}",
+        "warning_battery": "⚠️ <b>Увага: Живлення від батареї</b>\nНапруга мережі: {voltage}В\nНавантаження: {load}Вт\nСвітло було: {duration}{runtime_line}{forecast_line}",
         "power_restored": "✅ <b>Живлення відновлено</b>\nНапруга мережі: {voltage}В\nСвітла не було: {duration}{forecast_line}",
         "battery_full": "🔋 <b>Батарея повністю заряджена</b>\nРівень: 100%",
-        "battery_charging": "📈 <b>Батарея заряджається</b>\nРівень: {level}%",
-        "battery_discharging": "📉 <b>Батарея розряджається</b>\nРівень: {level}%",
-        "battery_low": "⚠️ <b>Низький заряд батареї</b>\nРівень: {level}%",
-        "status": "📊 <b>Статус системи</b>\nМережа: {grid_status}\nНапруга: {voltage}В\nНавантаження: {load}Вт\nБатарея: {battery}%{state_duration_line}{runtime_line}{forecast_line}",
+        "battery_charging": "📈 <b>Батарея заряджається</b>\nРівень: {level}%{charge_time_line}",
+        "battery_discharging": "📉 <b>Батарея розряджається</b>\nРівень: {level}%{runtime_line}",
+        "battery_low": "⚠️ <b>Низький заряд батареї</b>\nРівень: {level}%{runtime_line}",
+        "status": "📊 <b>Статус системи</b>\nМережа: {grid_status}\nНапруга: {voltage}В\nНавантаження: {load}Вт\nБатарея: {battery}%{state_duration_line}{runtime_line}{charge_time_line}{forecast_line}",
         "online": "В мережі 🟢",
         "offline": "Відсутня 🔴",
         "connection_failed": "❌ Не вдалося підключитися до інвертора",
@@ -57,13 +58,13 @@ MESSAGES = {
         "stats_auto_paused": "Los informes automáticos están pausados en los ajustes del bot. Tu suscripción se ha guardado.",
         "select_lang": "Por favor, selecciona tu idioma:",
         "lang_set": "✅ Idioma cambiado a Español.",
-        "warning_battery": "⚠️ <b>Advertencia: Energía de Batería</b>\nVoltaje de red: {voltage}V\nCarga: {load}W\nDuración en línea: {duration}{forecast_line}",
+        "warning_battery": "⚠️ <b>Advertencia: Energía de Batería</b>\nVoltaje de red: {voltage}V\nCarga: {load}W\nDuración en línea: {duration}{runtime_line}{forecast_line}",
         "power_restored": "✅ <b>Energía Restaurada</b>\nVoltaje de red: {voltage}V\nDuración fuera de línea: {duration}{forecast_line}",
         "battery_full": "🔋 <b>Batería Completamente Cargada</b>\nNivel: 100%",
-        "battery_charging": "📈 <b>Batería cargándose</b>\nNivel: {level}%",
-        "battery_discharging": "📉 <b>Batería descargándose</b>\nNivel: {level}%",
-        "battery_low": "⚠️ <b>Batería baja</b>\nNivel: {level}%",
-        "status": "📊 <b>Estado del Sistema</b>\nRed: {grid_status}\nVoltaje: {voltage}V\nCarga: {load}W\nBatería: {battery}%{state_duration_line}{runtime_line}{forecast_line}",
+        "battery_charging": "📈 <b>Batería cargándose</b>\nNivel: {level}%{charge_time_line}",
+        "battery_discharging": "📉 <b>Batería descargándose</b>\nNivel: {level}%{runtime_line}",
+        "battery_low": "⚠️ <b>Batería baja</b>\nNivel: {level}%{runtime_line}",
+        "status": "📊 <b>Estado del Sistema</b>\nRed: {grid_status}\nVoltaje: {voltage}V\nCarga: {load}W\nBatería: {battery}%{state_duration_line}{runtime_line}{charge_time_line}{forecast_line}",
         "online": "En línea 🟢",
         "offline": "Fuera de línea 🔴",
         "connection_failed": "❌ No se pudo conectar",
@@ -80,13 +81,13 @@ MESSAGES = {
         "stats_auto_paused": "Automatische Berichte sind in den Bot-Einstellungen pausiert. Ihr Abonnement ist gespeichert.",
         "select_lang": "Bitte wählen Sie Ihre Sprache:",
         "lang_set": "✅ Sprache auf Deutsch eingestellt.",
-        "warning_battery": "⚠️ <b>Warnung: Batteriebetrieb</b>\nNetzspannung: {voltage}V\nLast: {load}W\nOnline-Dauer: {duration}{forecast_line}",
+        "warning_battery": "⚠️ <b>Warnung: Batteriebetrieb</b>\nNetzspannung: {voltage}V\nLast: {load}W\nOnline-Dauer: {duration}{runtime_line}{forecast_line}",
         "power_restored": "✅ <b>Strom wiederhergestellt</b>\nNetzspannung: {voltage}V\nOffline-Dauer: {duration}{forecast_line}",
         "battery_full": "🔋 <b>Batterie voll geladen</b>\nStand: 100%",
-        "battery_charging": "📈 <b>Batterie wird geladen</b>\nStand: {level}%",
-        "battery_discharging": "📉 <b>Batterie entlädt</b>\nStand: {level}%",
-        "battery_low": "⚠️ <b>Batteriestand niedrig</b>\nStand: {level}%",
-        "status": "📊 <b>Systemstatus</b>\nNetz: {grid_status}\nSpannung: {voltage}V\nLast: {load}W\nBatterie: {battery}%{state_duration_line}{runtime_line}{forecast_line}",
+        "battery_charging": "📈 <b>Batterie wird geladen</b>\nStand: {level}%{charge_time_line}",
+        "battery_discharging": "📉 <b>Batterie entlädt</b>\nStand: {level}%{runtime_line}",
+        "battery_low": "⚠️ <b>Batteriestand niedrig</b>\nStand: {level}%{runtime_line}",
+        "status": "📊 <b>Systemstatus</b>\nNetz: {grid_status}\nSpannung: {voltage}V\nLast: {load}W\nBatterie: {battery}%{state_duration_line}{runtime_line}{charge_time_line}{forecast_line}",
         "online": "Online 🟢",
         "offline": "Offline 🔴",
         "connection_failed": "❌ Verbindung fehlgeschlagen",
@@ -116,6 +117,7 @@ def get_message(lang_code, key, **kwargs):
         values = {
             "state_duration_line": "",
             "runtime_line": "",
+            "charge_time_line": "",
             "forecast_line": "",
             **kwargs,
         }
@@ -177,7 +179,9 @@ def get_state_duration_line(lang_code, is_grid_online, seconds):
     )
 
 
-def get_runtime_line(lang_code, battery_soc, load_watts, capacity_kwh, cutoff_soc, efficiency=1.0):
+def get_runtime_line(
+    lang_code, battery_soc, load_watts, capacity_kwh, cutoff_soc, efficiency=1.0, *, include_energy=True
+):
     text = {
         "en": (
             "\n⏱ Estimated runtime to {cutoff}%: {duration}",
@@ -220,7 +224,22 @@ def get_runtime_line(lang_code, battery_soc, load_watts, capacity_kwh, cutoff_so
     usable = max(0.0, soc - cutoff) / 100.0 * capacity * eta
     cutoff_text = int(cutoff) if cutoff.is_integer() else cutoff
     duration = format_duration(usable / (load / 1000.0) * 3600, lang_code)
-    return head.format(cutoff=cutoff_text, duration=duration) + "\n" + energy_label.format(energy=usable)
+    line = head.format(cutoff=cutoff_text, duration=duration)
+    return line + "\n" + energy_label.format(energy=usable) if include_energy else line
+
+
+def get_charge_time_line(lang_code, seconds_remaining):
+    labels = {
+        "en": ("\n⏱ To 100%: about {duration}", "\n⏱ To 100%: not enough data yet"),
+        "uk": ("\n⏱ До 100%: приблизно {duration}", "\n⏱ До 100%: недостатньо даних"),
+        "es": ("\n⏱ Hasta el 100%: aprox. {duration}", "\n⏱ Hasta el 100%: aún sin datos suficientes"),
+        "de": ("\n⏱ Bis 100%: ca. {duration}", "\n⏱ Bis 100%: noch nicht genug Daten"),
+    }
+    estimate, unknown = labels.get(lang_code, labels["en"])
+    if seconds_remaining is None or not math.isfinite(seconds_remaining) or seconds_remaining < 0:
+        return unknown
+    rounded = max(60, round(seconds_remaining / 60) * 60) if seconds_remaining > 0 else 0
+    return estimate.format(duration=format_duration(rounded, lang_code))
 
 
 def _hours(seconds):
