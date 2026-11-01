@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -167,3 +168,144 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
             await monitor.check()
         self.assertEqual(monitor.broadcast.await_args.kwargs["runtime_eta_seconds"], 43200)
         self.assertEqual(monitor.broadcast.await_args.kwargs["battery_cutoff_soc"], 15)
+
+    def outage_monitor(self, readings):
+        monitor = DeyeStatusMonitor(
+            None, SimpleNamespace(next_event_for_state=lambda _: ("", "")), self.settings
+        )
+        monitor.is_grid_online = True
+        monitor.last_battery_soc = 70
+        monitor.read_inverter = Mock(side_effect=readings)
+        monitor.broadcast = AsyncMock()
+        self.addAsyncCleanup(monitor.close)
+        return monitor
+
+    async def test_zero_load_outage_gets_one_fresh_followup_after_five_seconds(self):
+        monitor = self.outage_monitor(
+            [
+                InverterReading(220, False, 70, 0),
+                InverterReading(0, False, 70, 500, 10, 200, 20),
+                InverterReading(0, False, 70, 600, 12, 200, 20),
+            ]
+        )
+        with (
+            patch.object(telemetry, "record_sample", AsyncMock()),
+            patch.object(state_repository, "record_transition", AsyncMock()) as transition,
+            patch("deye_notifier.inverter.monitor.asyncio.sleep", AsyncMock()) as delay,
+        ):
+            first = await monitor.check()
+            monitor.broadcast.assert_not_awaited()
+            self.assertEqual(first.load_watts, 0)
+            await monitor._load_followup_task
+            await monitor.check()  # Later normal polls must not repeat the update.
+        delay.assert_awaited_once_with(5)
+        transition.assert_awaited_once()
+        monitor.broadcast.assert_awaited_once_with(
+            "outage_load", load=500, level=70, runtime_eta_seconds=36000, battery_cutoff_soc=20
+        )
+        self.assertIsNone(monitor._load_followup_task)
+
+    async def test_followup_does_not_send_zero_failed_or_restored_readings(self):
+        for reading in (InverterReading(0, False, 70, 0), None, InverterReading(230, True, 70, 500)):
+            with self.subTest(reading=reading):
+                monitor = self.outage_monitor([InverterReading(220, False, 70, 0), reading])
+                with (
+                    patch.object(telemetry, "record_sample", AsyncMock()),
+                    patch.object(state_repository, "record_transition", AsyncMock()),
+                    patch("deye_notifier.inverter.monitor.asyncio.sleep", AsyncMock()) as delay,
+                ):
+                    await monitor.check()
+                    await monitor._load_followup_task
+                delay.assert_awaited_once_with(5)
+                monitor.broadcast.assert_not_awaited()
+                self.assertIsNone(monitor._load_followup_task)
+                self.assertEqual(monitor.read_inverter.call_count, 2)
+
+    async def test_restoration_before_timeout_cancels_the_pending_read(self):
+        monitor = self.outage_monitor(
+            [InverterReading(220, False, 70, 0), InverterReading(230, True, 70, 500)]
+        )
+        waiting = asyncio.Event()
+        release = asyncio.Event()
+
+        async def wait_delay(seconds):
+            self.assertEqual(seconds, 5)
+            waiting.set()
+            await release.wait()
+
+        with (
+            patch.object(telemetry, "record_sample", AsyncMock()),
+            patch.object(state_repository, "record_transition", AsyncMock()),
+            patch("deye_notifier.inverter.monitor.asyncio.sleep", wait_delay),
+        ):
+            await monitor.check()
+            await waiting.wait()
+            await monitor.check()
+        self.assertIsNone(monitor._load_followup_task)
+        self.assertEqual(monitor.read_inverter.call_count, 2)
+        monitor.broadcast.assert_not_awaited()
+
+    async def test_nonzero_load_outage_does_not_schedule_a_followup(self):
+        monitor = self.outage_monitor([InverterReading(0, False, 70, 500)])
+        with (
+            patch.object(telemetry, "record_sample", AsyncMock()),
+            patch.object(state_repository, "record_transition", AsyncMock()),
+        ):
+            await monitor.check()
+        self.assertIsNone(monitor._load_followup_task)
+        monitor.broadcast.assert_not_awaited()
+
+    async def test_shutdown_cancels_the_delayed_task_before_closing_resources(self):
+        monitor = self.outage_monitor([InverterReading(220, False, 70, 0)])
+        with (
+            patch.object(telemetry, "record_sample", AsyncMock()),
+            patch.object(state_repository, "record_transition", AsyncMock()),
+        ):
+            await monitor.check()
+            task = monitor._load_followup_task
+            await monitor.close()
+        self.assertTrue(task.done())
+        self.assertIsNone(monitor._load_followup_task)
+        self.assertEqual(monitor.read_inverter.call_count, 1)
+
+    async def test_discharge_milestone_during_followup_does_not_duplicate_load_update(self):
+        monitor = self.outage_monitor(
+            [InverterReading(220, False, 76, 0), InverterReading(0, False, 75, 500)]
+        )
+        monitor.last_battery_soc = 76
+        with (
+            patch.object(telemetry, "record_sample", AsyncMock()),
+            patch.object(state_repository, "record_transition", AsyncMock()),
+            patch("deye_notifier.inverter.monitor.asyncio.sleep", AsyncMock()),
+        ):
+            await monitor.check()
+            await monitor._load_followup_task
+        monitor.broadcast.assert_awaited_once()
+        self.assertEqual(monitor.broadcast.await_args.args[0], "battery_discharging")
+        self.assertEqual(monitor.broadcast.await_args.kwargs["load"], 500)
+
+    async def test_discharge_milestone_before_timeout_cancels_duplicate_load_update(self):
+        monitor = self.outage_monitor(
+            [InverterReading(220, False, 76, 0), InverterReading(0, False, 75, 500)]
+        )
+        monitor.last_battery_soc = 76
+        waiting = asyncio.Event()
+        release = asyncio.Event()
+
+        async def wait_delay(seconds):
+            waiting.set()
+            await release.wait()
+
+        with (
+            patch.object(telemetry, "record_sample", AsyncMock()),
+            patch.object(state_repository, "record_transition", AsyncMock()),
+            patch("deye_notifier.inverter.monitor.asyncio.sleep", wait_delay),
+        ):
+            await monitor.check()
+            await waiting.wait()
+            await monitor.check()  # A manual/short-interval poll already sends the settled load.
+        self.assertIsNone(monitor._load_followup_task)
+        self.assertEqual(monitor.read_inverter.call_count, 2)
+        monitor.broadcast.assert_awaited_once()
+        self.assertEqual(monitor.broadcast.await_args.args[0], "battery_discharging")
+        self.assertEqual(monitor.broadcast.await_args.kwargs["load"], 500)

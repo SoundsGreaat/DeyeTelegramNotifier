@@ -22,6 +22,7 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
             ("battery_discharging", None, "Estimated runtime to 20%: 4h 57m"),
             ("battery_low", None, "Estimated runtime to 20%: 4h 57m"),
             ("warning_battery", None, "Estimated runtime to 15%: 12h"),
+            ("outage_load", None, "Load: 1000 W"),
             ("power_restored", None, "Grid was unavailable: 1h"),
         )
         for key, seconds, expected in cases:
@@ -56,7 +57,7 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
                 self.assertIn("Charging: 4046 W", self.bot.send_message.await_args.args[1])
             text = self.bot.send_message.await_args.args[1]
             self.assertNotIn("Usable reserve", text)
-            if key in {"battery_discharging", "battery_low", "warning_battery"}:
+            if key in {"battery_discharging", "battery_low", "warning_battery", "outage_load"}:
                 self.assertIn("Load: 1000 W", text)
                 self.assertLess(text.index("Load:"), text.index("Estimated runtime"))
             if key == "warning_battery":
@@ -168,3 +169,38 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
             await monitor.deliver_pending()
         send.assert_not_awaited()
         mark.assert_awaited_once_with(None, 1)
+
+    async def test_zero_load_is_hidden_only_in_the_initial_outage_message_in_all_languages(self):
+        from deye_notifier.bot import locales
+
+        for language in locales.LANGUAGES:
+            event = dict(
+                id=1,
+                message_key="warning_battery",
+                voltage=220.7,
+                load_watts=0,
+                duration="22m 11s",
+                level=70,
+                threshold=None,
+                forecast_action="turn_on",
+                forecast_text="01.11.2026 20:00",
+                report_payload=None,
+                runtime_eta_seconds=36000,
+                battery_cutoff_soc=20,
+            )
+            with (
+                self.subTest(language=language),
+                patch.object(
+                    notification_repository, "get_pending_notifications", AsyncMock(return_value=[event])
+                ),
+                patch.object(chat_repository, "get_chats", AsyncMock(return_value=[(123, language)])),
+                patch.object(notification_repository, "mark_notification_delivered", AsyncMock()),
+            ):
+                await NotificationService(None, self.bot, self.settings).deliver_pending()
+            text = self.bot.send_message.await_args.args[1]
+            self.assertNotIn(locales.get_load_line(language, 0), text)
+            self.assertNotIn("220.7", text)
+            self.assertNotIn(locales.format_duration(36000, language), text)
+            self.assertIn("70%", text)
+            self.assertIn(locales.format_duration(1331, language), text)
+            self.assertIn("01.11.2026 20:00", text)

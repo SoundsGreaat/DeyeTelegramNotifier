@@ -28,10 +28,16 @@ class ApplicationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
             self.assertIs(kwargs["settings"], self.settings)
             order.append("poll")
 
-        monitor = SimpleNamespace(run=AsyncMock(), running=True)
+        async def close_monitor():
+            order.append("monitor_closed")
+
+        async def close_pool():
+            order.append("pool_closed")
+
+        monitor = SimpleNamespace(run=AsyncMock(), running=True, close=AsyncMock(side_effect=close_monitor))
         notifier = SimpleNamespace(delivery_loop=AsyncMock(), running=True)
         provider = SimpleNamespace(run=AsyncMock())
-        pool = SimpleNamespace(close=AsyncMock())
+        pool = SimpleNamespace(close=AsyncMock(side_effect=close_pool))
         with (
             patch.object(app, "Bot", return_value=self.bot),
             patch.object(app, "get_db_pool", AsyncMock(return_value=pool)),
@@ -44,7 +50,8 @@ class ApplicationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
             patch.object(app, "create_dispatcher", return_value=SimpleNamespace(start_polling=poll)),
         ):
             await app.main(self.settings)
-        self.assertEqual(order, ["migrate", "register", "poll"])
+        self.assertEqual(order, ["migrate", "register", "poll", "monitor_closed", "pool_closed"])
+        monitor.close.assert_awaited_once()
         pool.close.assert_awaited_once()
         self.bot.session.close.assert_awaited_once()
         self.assertFalse(monitor.running)

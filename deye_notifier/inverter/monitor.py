@@ -12,6 +12,7 @@ from deye_notifier.inverter.charging import ChargeEstimator, ChargingEstimate
 from deye_notifier.inverter.client import InverterClient
 
 logger = logging.getLogger(__name__)
+OUTAGE_LOAD_DELAY_SECONDS = 5
 
 
 class DeyeStatusMonitor:
@@ -28,6 +29,7 @@ class DeyeStatusMonitor:
         self.charge_estimator = ChargeEstimator(max_gap_seconds=settings.stats_max_gap_seconds)
         self._charge_history_loaded = False
         self.latest_reading = None
+        self._load_followup_task = None
 
     def format_duration(self, delta):
         total_seconds = int(delta.total_seconds())
@@ -69,6 +71,59 @@ class DeyeStatusMonitor:
             runtime_eta_seconds=kwargs.get("runtime_eta_seconds"),
             battery_cutoff_soc=kwargs.get("battery_cutoff_soc"),
         )
+
+    async def _cancel_load_followup(self):
+        task = self._load_followup_task
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            if self._load_followup_task is task:
+                self._load_followup_task = None
+
+    async def close(self):
+        self.running = False
+        await self._cancel_load_followup()
+
+    async def _schedule_load_followup(self):
+        await self._cancel_load_followup()
+        self._load_followup_task = asyncio.create_task(self._send_load_followup(self.last_status_time))
+
+    async def _send_load_followup(self, outage_started):
+        try:
+            await asyncio.sleep(OUTAGE_LOAD_DELAY_SECONDS)
+            async with self.check_lock:
+                if (
+                    not self.running
+                    or self.is_grid_online is not False
+                    or self.last_status_time != outage_started
+                ):
+                    return
+                previous_soc = self.last_battery_soc
+                reading = await self._check()
+                events = self.battery_events(previous_soc, reading.battery_soc) if reading is not None else []
+                # A normal discharge milestone already includes the settled load.
+                load_already_sent = bool(events and events[-1][0] in {"battery_discharging", "battery_low"})
+                if (
+                    reading is not None
+                    and not reading.is_grid_online
+                    and reading.load_watts > 0
+                    and not load_already_sent
+                    and self.last_status_time == outage_started
+                ):
+                    await self.broadcast(
+                        "outage_load",
+                        load=reading.load_watts,
+                        level=reading.battery_soc,
+                        runtime_eta_seconds=reading.runtime_seconds(self.settings),
+                        battery_cutoff_soc=reading.cutoff_soc(self.settings),
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Could not read settled load after power outage")
+        finally:
+            if self._load_followup_task is asyncio.current_task():
+                self._load_followup_task = None
 
     def charging_estimate(self):
         now = datetime.now(timezone.utc)
@@ -128,6 +183,7 @@ class DeyeStatusMonitor:
         currently_online = reading.is_grid_online
         runtime_seconds = reading.runtime_seconds(self.settings)
         cutoff = reading.cutoff_soc(self.settings)
+        transitioned = False
 
         if self.is_grid_online is None:
             saved_state = await state_repository.load_monitor_state(self.pool)
@@ -158,6 +214,7 @@ class DeyeStatusMonitor:
                     )
                     self.is_grid_online = currently_online
                     self.last_status_time = now
+                    transitioned = True
             status_label = "GRID" if currently_online else "BATTERY"
             logger.info(
                 f"Monitor started. Current mode: {status_label}, Voltage: {grid_v}V, Battery: {battery_soc}%"
@@ -180,9 +237,15 @@ class DeyeStatusMonitor:
             )
             self.last_status_time = now
             self.is_grid_online = currently_online
+            transitioned = True
         else:
             status_text = "OK" if currently_online else "BATTERY"
             logger.debug(f"Grid: {grid_v}V, Batt: {battery_soc}% | {status_text}")
+
+        if currently_online:
+            await self._cancel_load_followup()
+        elif transitioned and load_watts == 0:
+            await self._schedule_load_followup()
 
         await db_retry(
             self.pool,
@@ -211,6 +274,10 @@ class DeyeStatusMonitor:
                 battery_cutoff_soc=cutoff,
                 charge_power_watts=reading.charge_power_watts if key == "battery_charging" else None,
             )
+            if load_watts > 0 and key in {"battery_discharging", "battery_low"}:
+                # The load has already reached subscribers in this milestone;
+                # cancel a pending delayed update, including after manual checks.
+                await self._cancel_load_followup()
         self.last_battery_soc = battery_soc
         return reading
 

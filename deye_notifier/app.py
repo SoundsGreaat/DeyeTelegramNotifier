@@ -62,10 +62,14 @@ async def main(settings=None):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         try:
-            if pool is not None:
-                await pool.close()
+            if monitor is not None:
+                await monitor.close()
         finally:
-            await bot.session.close()
+            try:
+                if pool is not None:
+                    await pool.close()
+            finally:
+                await bot.session.close()
 
 
 def run():

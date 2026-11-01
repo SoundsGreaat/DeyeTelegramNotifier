@@ -53,9 +53,13 @@ class NotificationService:
                         event["forecast_text"] or "",
                     ),
                 }
+                if event["message_key"] == "warning_battery" and not event["load_watts"]:
+                    kwargs["load_line"] = ""
                 if (
-                    event["message_key"] in {"battery_discharging", "battery_low", "warning_battery"}
+                    event["message_key"]
+                    in {"battery_discharging", "battery_low", "warning_battery", "outage_load"}
                     and event["level"] is not None
+                    and not (event["message_key"] == "warning_battery" and not event["load_watts"])
                 ):
                     kwargs["runtime_line"] = locales.get_runtime_line(
                         language,
