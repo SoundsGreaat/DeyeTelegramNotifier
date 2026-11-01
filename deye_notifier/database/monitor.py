@@ -41,6 +41,8 @@ async def record_transition(
     forecast_action="",
     forecast_text="",
     battery_soc=None,
+    runtime_eta_seconds=None,
+    battery_cutoff_soc=None,
 ):
     """Persist a state change and notification before Telegram delivery."""
 
@@ -50,8 +52,9 @@ async def record_transition(
                 await conn.execute(
                     """
                     INSERT INTO notification_queue
-                        (message_key, voltage, load_watts, duration, forecast_action, forecast_text, level)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        (message_key, voltage, load_watts, duration, forecast_action, forecast_text, level,
+                         runtime_eta_seconds, battery_cutoff_soc)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     """,
                     "power_restored" if is_grid_online else "warning_battery",
                     voltage,
@@ -60,6 +63,8 @@ async def record_transition(
                     forecast_action,
                     forecast_text,
                     battery_soc,
+                    runtime_eta_seconds,
+                    battery_cutoff_soc,
                 )
                 await conn.execute(
                     """

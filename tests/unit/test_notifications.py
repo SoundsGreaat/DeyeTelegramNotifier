@@ -21,7 +21,7 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
             ("battery_charging", 1800, "To 100%: about 30m"),
             ("battery_discharging", None, "Estimated runtime to 20%: 4h 57m"),
             ("battery_low", None, "Estimated runtime to 20%: 4h 57m"),
-            ("warning_battery", None, "Estimated runtime to 20%: 4h 57m"),
+            ("warning_battery", None, "Estimated runtime to 15%: 12h"),
         )
         for key, seconds, expected in cases:
             event = dict(
@@ -36,6 +36,8 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
                 forecast_text="",
                 report_payload=None,
                 charge_eta_seconds=seconds,
+                runtime_eta_seconds=43200 if key == "warning_battery" else None,
+                battery_cutoff_soc=15 if key == "warning_battery" else None,
             )
             with (
                 self.subTest(message=key),

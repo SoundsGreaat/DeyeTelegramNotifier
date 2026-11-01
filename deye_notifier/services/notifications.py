@@ -59,9 +59,12 @@ class NotificationService:
                         event["level"],
                         event["load_watts"],
                         self.settings.battery_capacity_kwh,
-                        self.settings.battery_cutoff_soc,
+                        event["battery_cutoff_soc"]
+                        if event.get("battery_cutoff_soc") is not None
+                        else self.settings.battery_cutoff_soc,
                         self.settings.battery_inverter_efficiency,
                         include_energy=False,
+                        runtime_seconds=event.get("runtime_eta_seconds"),
                     )
                 if event["message_key"] == "battery_charging":
                     kwargs["charge_time_line"] = locales.get_charge_time_line(

@@ -10,6 +10,7 @@ from support import IsolatedTestConfig
 from deye_notifier.bot import handlers, locales
 from deye_notifier.database import chats as chat_repository
 from deye_notifier.inverter.charging import ChargingEstimate
+from deye_notifier.inverter.client import InverterReading
 
 
 class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
@@ -17,7 +18,7 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         wait = SimpleNamespace(edit_text=AsyncMock())
         message = SimpleNamespace(chat=SimpleNamespace(id=123), answer=AsyncMock(return_value=wait))
         monitor = SimpleNamespace(
-            check=AsyncMock(return_value=(230, 0, 80, 1000)),
+            check=AsyncMock(return_value=InverterReading(230, True, 80, 1000)),
             last_status_time=datetime.now(timezone.utc) - timedelta(hours=2),
             charging_estimate=lambda: ChargingEstimate(False, None),
         )
@@ -41,7 +42,7 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         wait = SimpleNamespace(edit_text=AsyncMock())
         message = SimpleNamespace(chat=SimpleNamespace(id=123), answer=AsyncMock(return_value=wait))
         monitor = SimpleNamespace(
-            check=AsyncMock(return_value=(230, 0, 80, 1000)),
+            check=AsyncMock(return_value=InverterReading(230, True, 80, 1000)),
             last_status_time=datetime.now(timezone.utc),
             charging_estimate=lambda: ChargingEstimate(True, 1800),
         )
@@ -101,3 +102,25 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         with patch.object(chat_repository, "unsubscribe_chat", AsyncMock()) as unsubscribe:
             await handlers.cmd_stop(message, None)
         unsubscribe.assert_awaited_once_with(None, 123)
+
+    async def test_status_uses_measured_runtime_and_shutdown_without_configured_kwh(self):
+        wait = SimpleNamespace(edit_text=AsyncMock())
+        message = SimpleNamespace(chat=SimpleNamespace(id=123), answer=AsyncMock(return_value=wait))
+        monitor = SimpleNamespace(
+            check=AsyncMock(return_value=InverterReading(230, False, 75, 500, 10, 200, 15)),
+            last_status_time=datetime.now(timezone.utc),
+            charging_estimate=lambda: ChargingEstimate(False, None),
+        )
+        with patch.object(chat_repository, "get_chat_language", AsyncMock(return_value="en")):
+            await handlers.cmd_status(
+                message,
+                None,
+                SimpleNamespace(next_event_for_state=lambda _: ("", "")),
+                monitor,
+                replace(self.settings, battery_capacity_kwh=0),
+            )
+        result = wait.edit_text.await_args.args[0]
+        self.assertIn("Estimated runtime to 15%: 12h", result)
+        self.assertIn("Usable reserve: 6.00 kWh", result)
+        self.assertIn("Offline", result)
+        self.assertNotIn("set BATTERY_CAPACITY_KWH", result)

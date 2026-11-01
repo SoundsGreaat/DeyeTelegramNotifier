@@ -8,8 +8,8 @@ from deye_notifier.database import monitor as state_repository
 from deye_notifier.database import notifications as notification_repository
 from deye_notifier.database import telemetry
 from deye_notifier.database.connection import db_retry
-from deye_notifier.inverter.charging import ChargeEstimator
-from deye_notifier.inverter.client import VOLTAGE_THRESHOLD, InverterClient
+from deye_notifier.inverter.charging import ChargeEstimator, ChargingEstimate
+from deye_notifier.inverter.client import InverterClient
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ class DeyeStatusMonitor:
         self.check_lock = asyncio.Lock()
         self.charge_estimator = ChargeEstimator(max_gap_seconds=settings.stats_max_gap_seconds)
         self._charge_history_loaded = False
+        self.latest_reading = None
 
     def format_duration(self, delta):
         total_seconds = int(delta.total_seconds())
@@ -64,10 +65,19 @@ class DeyeStatusMonitor:
             threshold=kwargs.get("threshold"),
             forecast_text=kwargs.get("forecast_text", ""),
             charge_eta_seconds=kwargs.get("charge_eta_seconds"),
+            runtime_eta_seconds=kwargs.get("runtime_eta_seconds"),
+            battery_cutoff_soc=kwargs.get("battery_cutoff_soc"),
         )
 
     def charging_estimate(self):
-        return self.charge_estimator.estimate(datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        reading = self.latest_reading
+        if reading is not None and reading.battery_current is not None:
+            if (now - self._reading_at).total_seconds() > self.settings.stats_max_gap_seconds:
+                return ChargingEstimate(False, None)
+            charging = reading.battery_current < -0.1 and reading.battery_soc < 100
+            return ChargingEstimate(charging, reading.battery_seconds(100) if charging else None)
+        return self.charge_estimator.estimate(now)
 
     async def _observe_charge(self, now, battery_soc):
         if not self._charge_history_loaded:
@@ -99,21 +109,24 @@ class DeyeStatusMonitor:
     async def _check(self):
         loop = asyncio.get_running_loop()
         try:
-            grid_v, current_mode, battery_soc, load_watts = await loop.run_in_executor(
-                None, self.read_inverter
-            )
+            reading = await loop.run_in_executor(None, self.read_inverter)
         except Exception as e:
             logger.error(f"Executor error: {e}")
             return
 
-        if grid_v is None:
+        if reading is None:
             return
+        grid_v, battery_soc, load_watts = reading.grid_voltage, reading.battery_soc, reading.load_watts
         if battery_soc is None or not 0 <= battery_soc <= 100 or load_watts is None or load_watts < 0:
             logger.warning("Ignoring invalid inverter telemetry: SOC=%s load=%s", battery_soc, load_watts)
             return
         now = datetime.now(timezone.utc)
+        self.latest_reading = reading
+        self._reading_at = now
         await self._observe_charge(now, battery_soc)
-        currently_online = (grid_v > VOLTAGE_THRESHOLD) and (current_mode != 300)
+        currently_online = reading.is_grid_online
+        runtime_seconds = reading.runtime_seconds(self.settings)
+        cutoff = reading.cutoff_soc(self.settings)
 
         if self.is_grid_online is None:
             saved_state = await state_repository.load_monitor_state(self.pool)
@@ -139,12 +152,14 @@ class DeyeStatusMonitor:
                         forecast_action,
                         forecast_text,
                         battery_soc=battery_soc,
+                        runtime_eta_seconds=runtime_seconds,
+                        battery_cutoff_soc=cutoff,
                     )
                     self.is_grid_online = currently_online
                     self.last_status_time = now
             status_label = "GRID" if currently_online else "BATTERY"
             logger.info(
-                f"Monitor started. Current mode: {status_label} ({current_mode}), Voltage: {grid_v}V, Battery: {battery_soc}%"
+                f"Monitor started. Current mode: {status_label}, Voltage: {grid_v}V, Battery: {battery_soc}%"
             )
         elif currently_online != self.is_grid_online:
             duration = self.format_duration(now - self.last_status_time)
@@ -159,12 +174,14 @@ class DeyeStatusMonitor:
                 forecast_action,
                 forecast_text,
                 battery_soc=battery_soc,
+                runtime_eta_seconds=runtime_seconds,
+                battery_cutoff_soc=cutoff,
             )
             self.last_status_time = now
             self.is_grid_online = currently_online
         else:
             status_text = "OK" if currently_online else "BATTERY"
-            logger.debug(f"Mode: {current_mode}, Grid: {grid_v}V, Batt: {battery_soc}% | {status_text}")
+            logger.debug(f"Grid: {grid_v}V, Batt: {battery_soc}% | {status_text}")
 
         await db_retry(
             self.pool,
@@ -174,6 +191,7 @@ class DeyeStatusMonitor:
                 currently_online,
                 load_watts,
                 battery_soc,
+                total_load_energy_kwh=reading.total_load_energy_kwh,
             ),
         )
         events = self.battery_events(self.last_battery_soc, battery_soc)
@@ -185,12 +203,14 @@ class DeyeStatusMonitor:
                 level=battery_soc,
                 threshold=threshold,
                 load=load_watts,
-                charge_eta_seconds=self.charge_estimator.estimate(now).seconds_remaining
+                charge_eta_seconds=self.charging_estimate().seconds_remaining
                 if key == "battery_charging"
                 else None,
+                runtime_eta_seconds=runtime_seconds,
+                battery_cutoff_soc=cutoff,
             )
         self.last_battery_soc = battery_soc
-        return grid_v, current_mode, battery_soc, load_watts
+        return reading
 
     async def run(self):
         logger.info(f"Starting Deye Inverter Monitor for {self.settings.inverter_ip}")

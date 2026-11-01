@@ -25,6 +25,7 @@ from deye_notifier.database import chats as chat_repository
 from deye_notifier.database import migrations as db_migrations
 from deye_notifier.database import monitor as state_repository
 from deye_notifier.database import notifications as notification_repository
+from deye_notifier.database import telemetry
 
 
 @unittest.skipUnless(os.getenv("TEST_POSTGRES_DSN"), "TEST_POSTGRES_DSN is not configured")
@@ -71,7 +72,9 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
     async def test_fresh_database_and_repeat_upgrade(self):
         await self.migrate()
         await self.migrate()
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0005_battery_eta",)])
+        self.assertEqual(
+            await self.sql("SELECT version_num FROM alembic_version"), [("0006_measured_telemetry",)]
+        )
         tables = await self.sql("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
         self.assertEqual(
             {row[0] for row in tables},
@@ -207,13 +210,24 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
                 1000,
                 "1h",
                 battery_soc=75,
+                runtime_eta_seconds=43200,
+                battery_cutoff_soc=15,
             )
             events = await notification_repository.get_pending_notifications(pool)
             self.assertEqual(events[-1]["message_key"], "warning_battery")
             self.assertEqual((events[-1]["level"], events[-1]["load_watts"]), (75, 1000))
+            self.assertEqual(events[-1]["runtime_eta_seconds"], 43200)
+            self.assertEqual(events[-1]["battery_cutoff_soc"], 15)
+            now = datetime.now(timezone.utc)
+            await telemetry.record_sample(pool, now, False, 1000, 75, total_load_energy_kwh=402.4)
+            samples = await telemetry.fetch_samples(pool, now, now)
+            self.assertEqual(samples[-1]["total_load_energy_kwh"], 402.4)
         finally:
             await pool.close()
-        await self.migrate("0004_language_cleanup", downgrade=True)
+        with self.assertRaisesRegex(RuntimeError, "measured energy history"):
+            await self.migrate("0005_battery_eta", downgrade=True)
+        await self.migrate("0004_language_cleanup", downgrade=True, x=["allow_data_loss=true"])
+        self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
         self.assertEqual(await self.sql("SELECT count(*) FROM notification_queue"), [(3,)])
         await self.migrate()
 
@@ -224,7 +238,9 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "subscription preferences"):
             await self.migrate("0002_reports", downgrade=True)
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0005_battery_eta",)])
+        self.assertEqual(
+            await self.sql("SELECT version_num FROM alembic_version"), [("0006_measured_telemetry",)]
+        )
         await self.migrate("0002_reports", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(await self.sql("SELECT chat_id FROM chats"), [(123,)])
 
@@ -255,7 +271,9 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "allow_data_loss"):
             await self.migrate("0001_legacy", downgrade=True)
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0005_battery_eta",)])
+        self.assertEqual(
+            await self.sql("SELECT version_num FROM alembic_version"), [("0006_measured_telemetry",)]
+        )
         self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
         await self.migrate("0001_legacy", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(
@@ -271,10 +289,10 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         with TemporaryDirectory() as directory:
             scripts = Path(directory) / "migrations"
             shutil.copytree(db_migrations.ROOT / "migrations", scripts)
-            (scripts / "versions" / "0006_failure.py").write_text(
+            (scripts / "versions" / "0007_failure.py").write_text(
                 "from alembic import op\n"
-                "revision = '0006_failure'\n"
-                "down_revision = '0005_battery_eta'\n"
+                "revision = '0007_failure'\n"
+                "down_revision = '0006_measured_telemetry'\n"
                 "def upgrade():\n"
                 "    op.execute('CREATE TABLE migration_should_rollback (id INTEGER)')\n"
                 "    raise RuntimeError('synthetic migration failure')\n"

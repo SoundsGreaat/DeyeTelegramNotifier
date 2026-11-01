@@ -1,5 +1,6 @@
 """Persistent inverter telemetry sample operations."""
 
+import math
 from datetime import datetime, timezone
 from numbers import Real
 from typing import Any
@@ -21,6 +22,8 @@ async def record_sample(
     is_grid_online: bool,
     load_watts: int | float,
     battery_soc: int | None,
+    *,
+    total_load_energy_kwh: float | None = None,
 ) -> None:
     """Upsert one normalised inverter reading."""
     observed_at = _utc(observed_at)
@@ -31,20 +34,30 @@ async def record_sample(
     load_value = int(round(load_watts))
     if battery_soc is not None and (not isinstance(battery_soc, Real) or not 0 <= battery_soc <= 100):
         raise ValueError("battery_soc must be between 0 and 100")
+    if total_load_energy_kwh is not None and (
+        not isinstance(total_load_energy_kwh, Real)
+        or not math.isfinite(total_load_energy_kwh)
+        or total_load_energy_kwh < 0
+    ):
+        raise ValueError("total_load_energy_kwh must be a non-negative number")
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO telemetry_samples (observed_at, is_grid_online, load_watts, battery_soc)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO telemetry_samples (
+              observed_at, is_grid_online, load_watts, battery_soc, total_load_energy_kwh
+            )
+            VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (observed_at) DO UPDATE SET
               is_grid_online = EXCLUDED.is_grid_online,
               load_watts = EXCLUDED.load_watts,
-              battery_soc = EXCLUDED.battery_soc
+              battery_soc = EXCLUDED.battery_soc,
+              total_load_energy_kwh = EXCLUDED.total_load_energy_kwh
             """,
             observed_at,
             is_grid_online,
             load_value,
             None if battery_soc is None else int(round(battery_soc)),
+            None if total_load_energy_kwh is None else float(total_load_energy_kwh),
         )
 
 
@@ -55,27 +68,27 @@ async def fetch_samples(pool: Any, start: datetime, end: datetime) -> list[Any]:
         return await conn.fetch(
             """
             WITH predecessor AS (
-                SELECT observed_at, is_grid_online, load_watts, battery_soc
+                SELECT observed_at, is_grid_online, load_watts, battery_soc, total_load_energy_kwh
                 FROM telemetry_samples
                 WHERE observed_at < $1
                 ORDER BY observed_at DESC
                 LIMIT 1
             ), period AS (
-                SELECT observed_at, is_grid_online, load_watts, battery_soc
+                SELECT observed_at, is_grid_online, load_watts, battery_soc, total_load_energy_kwh
                 FROM telemetry_samples
                 WHERE observed_at >= $1 AND observed_at < $2
             ), successor AS (
-                SELECT observed_at, is_grid_online, load_watts, battery_soc
+                SELECT observed_at, is_grid_online, load_watts, battery_soc, total_load_energy_kwh
                 FROM telemetry_samples
                 WHERE observed_at >= $2
                 ORDER BY observed_at ASC
                 LIMIT 1
             )
-            SELECT observed_at, is_grid_online, load_watts, battery_soc FROM predecessor
+            SELECT observed_at, is_grid_online, load_watts, battery_soc, total_load_energy_kwh FROM predecessor
             UNION ALL
-            SELECT observed_at, is_grid_online, load_watts, battery_soc FROM period
+            SELECT observed_at, is_grid_online, load_watts, battery_soc, total_load_energy_kwh FROM period
             UNION ALL
-            SELECT observed_at, is_grid_online, load_watts, battery_soc FROM successor
+            SELECT observed_at, is_grid_online, load_watts, battery_soc, total_load_energy_kwh FROM successor
             ORDER BY observed_at
             """,
             start_utc,

@@ -180,7 +180,15 @@ def get_state_duration_line(lang_code, is_grid_online, seconds):
 
 
 def get_runtime_line(
-    lang_code, battery_soc, load_watts, capacity_kwh, cutoff_soc, efficiency=1.0, *, include_energy=True
+    lang_code,
+    battery_soc,
+    load_watts,
+    capacity_kwh,
+    cutoff_soc,
+    efficiency=1.0,
+    *,
+    include_energy=True,
+    runtime_seconds=None,
 ):
     text = {
         "en": (
@@ -217,6 +225,15 @@ def get_runtime_line(
         eta = max(0.0, float(efficiency))
     except (TypeError, ValueError):
         return unconfigured
+    if runtime_seconds is not None:
+        cutoff_text = int(cutoff) if cutoff.is_integer() else cutoff
+        line = head.format(cutoff=cutoff_text, duration=format_duration(runtime_seconds, lang_code))
+        if not include_energy or load <= 0:
+            return line
+        # Estimate the deliverable AC reserve at the measured DC discharge
+        # rate and current AC load, rather than assuming nominal voltage or conversion efficiency.
+        usable = runtime_seconds * load / 3_600_000
+        return line + "\n" + energy_label.format(energy=usable)
     if capacity <= 0:
         return unconfigured
     if load <= 0:

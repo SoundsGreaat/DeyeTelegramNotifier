@@ -106,6 +106,101 @@ class EnergyStatsTests(IsolatedTestConfig, unittest.TestCase):
         self.assertEqual(stats["unknown_seconds"], 1800)
         self.assertEqual(stats["peak_load_watts"], 400)
 
+    def test_measured_counter_delta_is_used_and_clipped_proportionally(self):
+        start, end = utc("2025-01-01T00:05:00"), utc("2025-01-01T00:15:00")
+        rows = [
+            {
+                "observed_at": utc("2025-01-01T00:00:00"),
+                "is_grid_online": True,
+                "load_watts": 100,
+                "battery_soc": 90,
+                "total_load_energy_kwh": 10.0,
+            },
+            {
+                "observed_at": utc("2025-01-01T00:10:00"),
+                "is_grid_online": False,
+                "load_watts": 200,
+                "battery_soc": 80,
+                "total_load_energy_kwh": 11.0,
+            },
+            {
+                "observed_at": utc("2025-01-01T00:20:00"),
+                "is_grid_online": False,
+                "load_watts": 200,
+                "battery_soc": 70,
+                "total_load_energy_kwh": 12.0,
+            },
+        ]
+        from deye_notifier.statistics import _calculate_statistics
+
+        stats = _calculate_statistics(rows, start, end, 1200)
+        self.assertAlmostEqual(stats["energy_kwh"], 1.0)
+        self.assertAlmostEqual(stats["grid_energy_kwh"], 0.5)
+        self.assertAlmostEqual(stats["battery_mode_energy_kwh"], 0.5)
+        # Load averages and peaks retain their existing watt-based semantics.
+        self.assertEqual(stats["avg_load_watts"], 150)
+        self.assertEqual(stats["peak_load_watts"], 200)
+
+    def test_old_rows_missing_counter_and_counter_reset_use_watt_fallback(self):
+        start, end = utc("2025-01-01T00:00:00"), utc("2025-01-01T00:03:00")
+        rows = [
+            # Legacy four-field tuples remain supported.
+            (start, True, 3600, 90),
+            {
+                "observed_at": utc("2025-01-01T00:01:00"),
+                "is_grid_online": True,
+                "load_watts": 1800,
+                "battery_soc": 80,
+                "total_load_energy_kwh": 5.0,
+            },
+            {
+                "observed_at": utc("2025-01-01T00:02:00"),
+                "is_grid_online": False,
+                "load_watts": 900,
+                "battery_soc": 70,
+                "total_load_energy_kwh": None,
+            },
+            {
+                "observed_at": end,
+                "is_grid_online": False,
+                "load_watts": 900,
+                "battery_soc": 60,
+                "total_load_energy_kwh": 4.0,
+            },
+        ]
+        from deye_notifier.statistics import _calculate_statistics
+
+        stats = _calculate_statistics(rows, start, end, 120)
+        # All intervals fall back because at least one endpoint lacks a valid,
+        # nondecreasing counter value.
+        self.assertAlmostEqual(stats["energy_kwh"], 0.105)
+        self.assertAlmostEqual(stats["grid_energy_kwh"], 0.09)
+        self.assertAlmostEqual(stats["battery_mode_energy_kwh"], 0.015)
+
+    def test_long_gap_with_counters_remains_unknown(self):
+        from deye_notifier.statistics import _calculate_statistics
+
+        start, end = utc("2025-01-01T00:00:00"), utc("2025-01-01T00:10:00")
+        rows = [
+            {
+                "observed_at": start,
+                "is_grid_online": True,
+                "load_watts": 100,
+                "battery_soc": None,
+                "total_load_energy_kwh": 1.0,
+            },
+            {
+                "observed_at": end,
+                "is_grid_online": True,
+                "load_watts": 100,
+                "battery_soc": None,
+                "total_load_energy_kwh": 2.0,
+            },
+        ]
+        stats = _calculate_statistics(rows, start, end, 120)
+        self.assertEqual(stats["energy_kwh"], 0)
+        self.assertEqual(stats["unknown_seconds"], 600)
+
     def test_report_periods_and_completed_boundaries(self):
         try:
             tz = ZoneInfo("Europe/Kyiv")

@@ -13,7 +13,6 @@ from deye_notifier import statistics
 from deye_notifier.bot import locales
 from deye_notifier.config import Settings
 from deye_notifier.database import chats as chat_repository
-from deye_notifier.inverter.client import VOLTAGE_THRESHOLD
 from deye_notifier.services import reports
 from deye_notifier.services.schedules import YasnoScheduleProvider
 
@@ -91,8 +90,8 @@ async def cmd_status(
     if snapshot is None:
         await wait_msg.edit_text(locales.get_message(user_lang, "connection_failed"))
         return
-    grid_v, current_mode, battery_soc, load_watts = snapshot
-    is_online = (grid_v > VOLTAGE_THRESHOLD) and (current_mode != 300)
+    grid_v, battery_soc, load_watts = snapshot.grid_voltage, snapshot.battery_soc, snapshot.load_watts
+    is_online = snapshot.is_grid_online
     grid_status_text = locales.get_message(user_lang, "online" if is_online else "offline")
     forecast_action, forecast_text = schedule_provider.next_event_for_state(is_online)
     forecast_line = locales.get_forecast_line(user_lang, forecast_action, forecast_text)
@@ -115,8 +114,9 @@ async def cmd_status(
             battery_soc,
             load_watts,
             settings.battery_capacity_kwh,
-            settings.battery_cutoff_soc,
+            snapshot.cutoff_soc(settings),
             settings.battery_inverter_efficiency,
+            runtime_seconds=snapshot.runtime_seconds(settings),
         ),
         charge_time_line=locales.get_charge_time_line(user_lang, charge_estimate.seconds_remaining)
         if charge_estimate.is_charging

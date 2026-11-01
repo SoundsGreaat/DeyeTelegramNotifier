@@ -24,7 +24,7 @@ LOGGER_SERIAL=1234567890
 TELEGRAM_TOKEN=your_telegram_bot_token
 ```
 
-For battery runtime estimates, set `BATTERY_CAPACITY_KWH` to the total nominal battery capacity and `BATTERY_CUTOFF_SOC` to the shutdown percentage configured on the inverter. Adjust `BATTERY_INVERTER_EFFICIENCY` if needed. A capacity of `0` disables the estimate. These settings do not reconfigure the inverter.
+Battery forecasts use the inverter’s battery current, configured capacity in Ah, and shutdown SOC when available. `BATTERY_CAPACITY_KWH`, `BATTERY_CUTOFF_SOC`, and `BATTERY_INVERTER_EFFICIENCY` provide fallback runtime estimates; set capacity to the total nominal kWh of all batteries. These settings do not reconfigure the inverter.
 
 Report settings:
 
@@ -71,7 +71,7 @@ The bot registers its command menu with English descriptions at startup.
 
 Automatic reports cover the previous day, previous week, or previous month and are sent at `STATS_REPORT_HOUR` in `STATS_TIMEZONE`.
 
-Reports include estimated consumption, average and peak load, grid availability, observed outages, battery range, and data coverage. Missing readings remain unknown. Battery runtime is an estimate based on the current load and usable battery reserve.
+Reports use the inverter’s load-energy counter when available, falling back to sampled load. They include consumption, average and peak load, grid availability, observed outages, battery range, and data coverage. Missing readings remain unknown. Battery runtime remains an estimate based on current consumption and usable battery reserve.
 
 ## Database migrations
 

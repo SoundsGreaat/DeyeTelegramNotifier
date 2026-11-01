@@ -1,13 +1,14 @@
 """Persistent inverter telemetry and period statistics.
 
-The monitor records point-in-time readings.  Statistics are calculated by
-holding each reading until the next reading, while treating long polling gaps
-as unknown instead of silently inventing consumption.
+The monitor records point-in-time readings. Energy uses cumulative load
+counter differences when available, with held-load integration as a fallback.
+Long polling gaps remain unknown instead of silently inventing consumption.
 """
 
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Iterable, Sequence
 from zoneinfo import ZoneInfo
@@ -86,17 +87,27 @@ def _row_value(row: Any, key: str, index: int) -> Any:
         return row[index]
 
 
-def _normalise_samples(rows: Iterable[Any]) -> list[tuple[datetime, bool, int, int | None]]:
-    result: list[tuple[datetime, bool, int, int | None]] = []
+def _normalise_samples(rows: Iterable[Any]) -> list[tuple[datetime, bool, int, int | None, float | None]]:
+    result: list[tuple[datetime, bool, int, int | None, float | None]] = []
     for row in rows:
         observed_at = _utc(_row_value(row, "observed_at", 0))
         online = bool(_row_value(row, "is_grid_online", 1))
         load = int(_row_value(row, "load_watts", 2) or 0)
         soc_raw = _row_value(row, "battery_soc", 3)
         soc = None if soc_raw is None else int(soc_raw)
-        result.append((observed_at, online, max(0, load), soc))
+        try:
+            energy_raw = row["total_load_energy_kwh"]
+        except (KeyError, TypeError, IndexError):
+            try:
+                energy_raw = row[4]
+            except (KeyError, TypeError, IndexError):
+                energy_raw = None
+        energy = None
+        if isinstance(energy_raw, (int, float)) and math.isfinite(energy_raw) and energy_raw >= 0:
+            energy = float(energy_raw)
+        result.append((observed_at, online, max(0, load), soc, energy))
     result.sort(key=lambda item: item[0])
-    deduped: list[tuple[datetime, bool, int, int | None]] = []
+    deduped: list[tuple[datetime, bool, int, int | None, float | None]] = []
     for item in result:
         if deduped and deduped[-1][0] == item[0]:
             deduped[-1] = item
@@ -106,18 +117,18 @@ def _normalise_samples(rows: Iterable[Any]) -> list[tuple[datetime, bool, int, i
 
 
 def _build_intervals(
-    rows: Sequence[tuple[datetime, bool, int, int | None]],
+    rows: Sequence[tuple[Any, ...]],
     start: datetime,
     end: datetime,
     max_gap_seconds: float,
-) -> tuple[list[tuple[datetime, datetime, float, bool, int]], float]:
+) -> tuple[list[tuple[datetime, datetime, float, bool, int, float]], float]:
     """Build valid held-value intervals and return (intervals, unknown seconds)."""
     start_utc, end_utc = _utc(start), _utc(end)
     total_seconds = max(0.0, (end_utc - start_utc).total_seconds())
-    intervals: list[tuple[datetime, datetime, float, bool, int]] = []
+    intervals: list[tuple[datetime, datetime, float, bool, int, float]] = []
     valid_seconds = 0.0
     for previous, current in zip(rows, rows[1:]):
-        previous_at, online, load, _ = previous
+        previous_at, online, load, *_ = previous
         current_at = current[0]
         clipped_start = max(previous_at, start_utc)
         clipped_end = min(current_at, end_utc)
@@ -127,7 +138,16 @@ def _build_intervals(
         if gap_seconds > max_gap_seconds:
             continue
         seconds = (clipped_end - clipped_start).total_seconds()
-        intervals.append((clipped_start, clipped_end, seconds, online, load))
+        # Counter increments cover the complete pair of observations.  Clip
+        # them proportionally at report boundaries, matching held-value clipping.
+        previous_energy = previous[4] if len(previous) > 4 else None
+        current_energy = current[4] if len(current) > 4 else None
+        if previous_energy is not None and current_energy is not None and current_energy >= previous_energy:
+            full_seconds = gap_seconds
+            interval_energy = (current_energy - previous_energy) * seconds / full_seconds
+        else:
+            interval_energy = load * seconds / 3_600_000
+        intervals.append((clipped_start, clipped_end, seconds, online, load, interval_energy))
         valid_seconds += seconds
     return intervals, max(0.0, total_seconds - valid_seconds)
 
@@ -164,9 +184,9 @@ def _calculate_statistics(
     total_seconds = (end_utc - start_utc).total_seconds()
     online_seconds = sum(i[2] for i in intervals if i[3])
     offline_seconds = sum(i[2] for i in intervals if not i[3])
-    energy_kwh = sum(i[4] * i[2] for i in intervals) / 3_600_000
-    grid_energy_kwh = sum(i[4] * i[2] for i in intervals if i[3]) / 3_600_000
-    battery_mode_energy_kwh = sum(i[4] * i[2] for i in intervals if not i[3]) / 3_600_000
+    energy_kwh = sum(i[5] for i in intervals)
+    grid_energy_kwh = sum(i[5] for i in intervals if i[3])
+    battery_mode_energy_kwh = sum(i[5] for i in intervals if not i[3])
     weighted_load_seconds = sum(i[4] * i[2] for i in intervals)
     avg_load = weighted_load_seconds / (online_seconds + offline_seconds) if intervals else None
     period_rows = [row for row in rows if start_utc <= row[0] < end_utc]
@@ -191,7 +211,7 @@ def _calculate_statistics(
     running_outage = 0.0
     previous_end: datetime | None = None
     for interval in intervals:
-        interval_start, interval_end, seconds, online, _ = interval
+        interval_start, interval_end, seconds, online, *_ = interval
         if not online:
             if previous_end == interval_start:
                 running_outage += seconds

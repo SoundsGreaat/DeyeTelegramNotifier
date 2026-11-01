@@ -26,6 +26,7 @@ The current chain is:
 | `0003_subscriptions` | Separate power/battery subscriptions from automatic reports; existing users keep alerts and must explicitly opt in to reports. |
 | `0004_language_cleanup` | Switch saved Russian language preferences to English without changing subscriptions. |
 | `0005_battery_eta` | Preserve charging time estimates with queued battery notifications. |
+| `0006_measured_telemetry` | Store measured load-energy counters and battery runtime forecasts. |
 
 Both a fresh database and the project's known unversioned schemas can run `upgrade head`. The adoption revisions use conditional, additive SQL and preserve existing rows. Already timezone-aware values are left unchanged. There is no need to run `stamp`; stamping an unverified database would bypass the actual migrations.
 
@@ -94,6 +95,8 @@ python -m alembic upgrade head --sql
 ## Rollback
 
 Stop the bot first and deploy code compatible with the target schema. Alembic does not roll back automatically when an application image is replaced.
+
+Downgrading `0006_measured_telemetry` requires `-x allow_data_loss=true` when measured energy counters have been stored; sample rows remain, but their counter values are removed.
 
 `0004_language_cleanup` is a one-way preference normalization. Downgrading that revision keeps English selected; it cannot distinguish migrated users from users who explicitly chose English later.
 

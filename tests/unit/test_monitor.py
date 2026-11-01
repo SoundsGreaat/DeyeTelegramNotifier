@@ -7,6 +7,7 @@ from support import IsolatedTestConfig
 
 from deye_notifier.database import monitor as state_repository
 from deye_notifier.database import telemetry
+from deye_notifier.inverter.client import InverterReading
 from deye_notifier.inverter.monitor import DeyeStatusMonitor
 
 
@@ -43,7 +44,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
             Mock(), SimpleNamespace(next_event_for_state=lambda _: ("", "")), self.settings
         )
         since = datetime.now(timezone.utc) - timedelta(hours=3)
-        monitor.read_inverter = Mock(return_value=(230, 0, 24, 1000))
+        monitor.read_inverter = Mock(return_value=InverterReading(230, True, 24, 1000))
         monitor.broadcast = AsyncMock()
         with (
             patch.object(
@@ -62,7 +63,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
             await monitor.check()
             self.assertEqual(monitor.last_status_time, since)
             monitor.broadcast.assert_not_awaited()
-            monitor.read_inverter.return_value = (230, 0, 51, 1000)
+            monitor.read_inverter.return_value = InverterReading(230, True, 51, 1000)
             await monitor.check()
             self.assertEqual(monitor.last_status_time, since)
             transition.assert_not_awaited()
@@ -73,7 +74,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         monitor = DeyeStatusMonitor(None, None, self.settings)
         monitor.is_grid_online = True
         monitor.last_battery_soc = 20
-        monitor.read_inverter = Mock(return_value=(230, 0, 100, 1000))
+        monitor.read_inverter = Mock(return_value=InverterReading(230, True, 100, 1000))
         monitor.broadcast = AsyncMock()
         with patch.object(telemetry, "record_sample", AsyncMock()):
             await monitor.check()
@@ -83,6 +84,8 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
             threshold=100,
             load=1000,
             charge_eta_seconds=None,
+            runtime_eta_seconds=None,
+            battery_cutoff_soc=20,
         )
 
     async def test_transition_is_persisted_before_new_duration(self):
@@ -92,13 +95,13 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         monitor.is_grid_online = True
         monitor.last_battery_soc = 60
         monitor.last_status_time = datetime.now(timezone.utc) - timedelta(hours=1)
-        monitor.read_inverter = Mock(return_value=(0, 300, 60, 600))
+        monitor.read_inverter = Mock(return_value=InverterReading(0, False, 60, 600))
         with (
             patch.object(telemetry, "record_sample", AsyncMock()),
             patch.object(state_repository, "record_transition", AsyncMock()) as transition,
         ):
             result = await monitor.check()
-            self.assertEqual(result, (0, 300, 60, 600))
+            self.assertEqual(result, InverterReading(0, False, 60, 600))
             self.assertFalse(monitor.is_grid_online)
             self.assertEqual(monitor.last_status_time, transition.await_args.args[2])
             self.assertEqual(transition.await_args.kwargs["battery_soc"], 60)
@@ -126,7 +129,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         monitor._charge_history_loaded = True
         for offset, soc in ((150, 72), (100, 73), (50, 74)):
             monitor.charge_estimator.observe(now - timedelta(seconds=offset), soc)
-        monitor.read_inverter = Mock(return_value=(230, 0, 75, 1000))
+        monitor.read_inverter = Mock(return_value=InverterReading(230, True, 75, 1000))
         monitor.broadcast = AsyncMock()
         with patch.object(telemetry, "record_sample", AsyncMock()):
             await monitor.check()
@@ -134,3 +137,29 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.args[0], "battery_charging")
         self.assertEqual(event.kwargs["load"], 1000)
         self.assertAlmostEqual(event.kwargs["charge_eta_seconds"], 25 * 50, delta=1)
+
+    async def test_measured_charge_eta_updates_immediately_as_current_changes(self):
+        monitor = DeyeStatusMonitor(None, None, self.settings)
+        monitor.is_grid_online = True
+        monitor.read_inverter = Mock(return_value=InverterReading(230, True, 80, 1000, -80, 200, 15))
+        with patch.object(telemetry, "record_sample", AsyncMock()) as record:
+            await monitor.check()
+            self.assertEqual(monitor.charging_estimate().seconds_remaining, 1800)
+            monitor.read_inverter.return_value = InverterReading(230, True, 80, 1000, -40, 200, 15, 123.4)
+            await monitor.check()
+            self.assertEqual(monitor.charging_estimate().seconds_remaining, 3600)
+            self.assertEqual(record.await_args.kwargs["total_load_energy_kwh"], 123.4)
+            monitor.read_inverter.return_value = InverterReading(230, True, 80, 1000, 0, 200, 15)
+            await monitor.check()
+            self.assertFalse(monitor.charging_estimate().is_charging)
+
+    async def test_runtime_event_retains_measured_cutoff_and_dc_consumption(self):
+        monitor = DeyeStatusMonitor(None, None, self.settings)
+        monitor.is_grid_online = False
+        monitor.last_battery_soc = 76
+        monitor.read_inverter = Mock(return_value=InverterReading(0, False, 75, 500, 10, 200, 15))
+        monitor.broadcast = AsyncMock()
+        with patch.object(telemetry, "record_sample", AsyncMock()):
+            await monitor.check()
+        self.assertEqual(monitor.broadcast.await_args.kwargs["runtime_eta_seconds"], 43200)
+        self.assertEqual(monitor.broadcast.await_args.kwargs["battery_cutoff_soc"], 15)
