@@ -108,14 +108,42 @@ class StatusFormatTests(unittest.TestCase):
         ):
             self.assertIn(value, text)
         self.assertLess(text.index("Load: 1000 W"), text.index("Battery: 80%"))
-        self.assertLess(text.index("Load: 1000 W"), text.index("DC transformer temperature:"))
-        self.assertLess(text.index("Inverter radiator temperature:"), text.index("Battery: 80%"))
-        self.assertLess(text.index("Battery: 80%"), text.index("Battery temperature:"))
-        self.assertLess(text.index("Battery temperature:"), text.index("Battery voltage:"))
-        self.assertLess(text.index("Battery: 80%"), text.index("Battery voltage:"))
-        self.assertLess(text.index("Battery voltage:"), text.index("DC discharge:"))
+        self.assertIn("Battery: 80%\nDC discharge: 500 W\n", text)
         self.assertLess(text.index("DC discharge:"), text.index("Estimated runtime"))
-        self.assertLess(text.index("Estimated runtime"), text.index("Last reading:"))
+        self.assertLess(text.index("Estimated runtime"), text.index("Battery voltage:"))
+        self.assertLess(text.index("Battery current:"), text.index("Battery temperature:"))
+        self.assertLess(text.index("Shutdown cutoff:"), text.index("DC transformer temperature:"))
+        self.assertLess(text.index("Inverter radiator temperature:"), text.index("Total load energy:"))
+        self.assertTrue(text.endswith("Last reading: 01.11.2026 14:00:00 EET"))
+        self.assertEqual(len(text.split("\n\n")), 4)
+
+    def test_charging_power_and_eta_follow_soc_before_battery_details(self):
+        for soc, eta in ((80, 1800), (100, None)):
+            with self.subTest(soc=soc):
+                kwargs = self.kwargs | {
+                    "charge_estimate": SimpleNamespace(is_charging=True, seconds_remaining=eta)
+                }
+                text = render_status(
+                    "en",
+                    sample_reading(
+                        battery_soc=soc,
+                        battery_power_watts=-105,
+                        charge_power_watts=105,
+                        is_charging=True,
+                        is_discharging=False,
+                    ),
+                    self.settings,
+                    detailed=True,
+                    **kwargs,
+                )
+                self.assertIn(f"Battery: {soc}%\n⚡ Charging: 105 W\n", text)
+                self.assertLess(text.index("Charging:"), text.index("Battery voltage:"))
+                self.assertNotIn("Estimated runtime", text)
+                if eta is None:
+                    self.assertNotIn("To 100%", text)
+                else:
+                    self.assertLess(text.index("Charging:"), text.index("To 100%"))
+                    self.assertLess(text.index("To 100%"), text.index("Battery voltage:"))
 
     def test_optional_measurements_are_omitted_when_unavailable(self):
         text = render_status(
@@ -148,6 +176,7 @@ class StatusFormatTests(unittest.TestCase):
             self.assertNotIn(label, text)
         self.assertIn("Shutdown cutoff: 20%", text)
         self.assertNotIn("°C", text)
+        self.assertNotIn("\n\n\n", text)
 
     def test_invalid_temperatures_are_omitted_without_hiding_zero_or_negative_values(self):
         for value in (None, float("nan"), float("inf"), -100, 5839.5):

@@ -170,6 +170,52 @@ def render_status(
     if voltage_line:
         lines.append(voltage_line.lstrip("\n"))
     lines.append(locales.get_load_line(language, load_watts).lstrip("\n"))
+    if forecast_action and forecast_text:
+        safe_forecast = escape(str(forecast_text))
+        forecast = locales.get_forecast_line(language, forecast_action, safe_forecast)
+        if forecast:
+            lines.append(forecast.lstrip("\n"))
+    sections = [lines]
+
+    lines = []
+    battery_line = locales.get_battery_level_line(language, soc)
+    if battery_line:
+        lines.append(battery_line.lstrip("\n"))
+    unit_a = "А" if language == "uk" else "A"
+    unit_ah = "А·год" if language == "uk" else "Ah"
+    unit_w = "Вт" if language == "uk" else "W"
+    unit_kwh = "кВт·год" if language == "uk" else "kWh"
+    discharge_power = getattr(reading, "battery_power_watts", None)
+    if _finite(discharge_power) and float(discharge_power) > 0:
+        lines.append(f"{labels['discharge']}: {float(discharge_power):.0f} {unit_w}")
+    if charge_power_line:
+        lines.append(charge_power_line.lstrip("\n"))
+    if runtime_line:
+        lines.extend(runtime_line.lstrip("\n").splitlines())
+    if charge_time_line:
+        lines.append(charge_time_line.lstrip("\n"))
+
+    battery_voltage = getattr(reading, "battery_voltage", None)
+    if _finite(battery_voltage) and float(battery_voltage) >= 0:
+        unit_v = "В" if language == "uk" else "V"
+        lines.append(f"{labels['battery_voltage']}: {float(battery_voltage):.1f} {unit_v}")
+    current = getattr(reading, "battery_current", None)
+    if _finite(current):
+        lines.append(f"{labels['current']}: {abs(float(current)):.1f} {unit_a}")
+    temperature_line = _temperature_line(
+        labels["battery_temperature"], getattr(reading, "battery_temperature_c", None)
+    )
+    if temperature_line:
+        lines.append(temperature_line)
+    capacity = getattr(reading, "battery_capacity_ah", None)
+    if _finite(capacity) and float(capacity) > 0:
+        lines.append(f"{labels['capacity']}: {float(capacity):g} {unit_ah}")
+    cutoff = reading.cutoff_soc(settings)
+    if _finite(cutoff):
+        lines.append(f"{labels['cutoff']}: {float(cutoff):g}%")
+    sections.append(lines)
+
+    lines = []
     for label, field in (
         ("inverter_dc_temperature", "inverter_dc_temperature_c"),
         ("inverter_radiator_temperature", "inverter_radiator_temperature_c"),
@@ -177,55 +223,16 @@ def render_status(
         temperature_line = _temperature_line(labels[label], getattr(reading, field, None))
         if temperature_line:
             lines.append(temperature_line)
+    sections.append(lines)
 
-    battery_line = locales.get_battery_level_line(language, soc)
-    if battery_line:
-        lines.append(battery_line.lstrip("\n"))
-    temperature_line = _temperature_line(
-        labels["battery_temperature"], getattr(reading, "battery_temperature_c", None)
-    )
-    if temperature_line:
-        lines.append(temperature_line)
-    battery_voltage = getattr(reading, "battery_voltage", None)
-    if _finite(battery_voltage) and float(battery_voltage) >= 0:
-        unit_v = "В" if language == "uk" else "V"
-        lines.append(f"{labels['battery_voltage']}: {float(battery_voltage):.1f} {unit_v}")
-
-    unit_a = "А" if language == "uk" else "A"
-    unit_ah = "А·год" if language == "uk" else "Ah"
-    unit_w = "Вт" if language == "uk" else "W"
-    unit_kwh = "кВт·год" if language == "uk" else "kWh"
-    current = getattr(reading, "battery_current", None)
-    if _finite(current):
-        lines.append(f"{labels['current']}: {abs(float(current)):.1f} {unit_a}")
-    capacity = getattr(reading, "battery_capacity_ah", None)
-    if _finite(capacity) and float(capacity) > 0:
-        lines.append(f"{labels['capacity']}: {float(capacity):g} {unit_ah}")
-    cutoff = reading.cutoff_soc(settings)
-    if _finite(cutoff):
-        lines.append(f"{labels['cutoff']}: {float(cutoff):g}%")
-
+    lines = []
     energy = getattr(reading, "total_load_energy_kwh", None)
     if _finite(energy) and float(energy) >= 0:
         lines.append(f"{labels['energy']}: {float(energy):.1f} {unit_kwh}")
-    discharge_power = getattr(reading, "battery_power_watts", None)
-    if _finite(discharge_power) and float(discharge_power) > 0:
-        lines.append(f"{labels['discharge']}: {float(discharge_power):.0f} {unit_w}")
-    if runtime_line:
-        lines.extend(runtime_line.lstrip("\n").splitlines())
-    if charge_power_line:
-        lines.append(charge_power_line.lstrip("\n"))
-    if charge_time_line:
-        lines.append(charge_time_line.lstrip("\n"))
-
-    if forecast_action and forecast_text:
-        safe_forecast = escape(str(forecast_text))
-        forecast = locales.get_forecast_line(language, forecast_action, safe_forecast)
-        if forecast:
-            lines.append(forecast.lstrip("\n"))
     if observed_at is not None:
         if observed_at.tzinfo is None:
             observed_at = observed_at.replace(tzinfo=UTC)
         localized = observed_at.astimezone(settings.stats_timezone)
         lines.append(f"{labels['updated']}: {localized:%d.%m.%Y %H:%M:%S %Z}")
-    return "\n".join(lines)
+    sections.append(lines)
+    return "\n\n".join("\n".join(section) for section in sections if section)
