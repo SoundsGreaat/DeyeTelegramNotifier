@@ -15,6 +15,11 @@ def signed_word(value):
     return value - 65536 if value >= 32768 else value
 
 
+def temperature_c(value):
+    # Deye encodes 0 °C as 1000; zero and out-of-range words are unavailable.
+    return (value - 1000) / 10.0 if 0 < value <= 3000 else None
+
+
 @dataclass(frozen=True)
 class InverterReading:
     grid_voltage: float
@@ -27,6 +32,9 @@ class InverterReading:
     total_load_energy_kwh: float | None = None
     battery_power_watts: int | None = None
     battery_voltage: float | None = None
+    battery_temperature_c: float | None = None
+    inverter_dc_temperature_c: float | None = None
+    inverter_radiator_temperature_c: float | None = None
 
     @property
     def is_charging(self):
@@ -84,7 +92,7 @@ class InverterClient:
             data = inv.read_holding_registers(GRID_V_REG, 45)
             current = signed_word(data[41]) / 100.0
             current = current if abs(current) <= 1000 else None
-            capacity = cutoff = total_energy = None
+            capacity = cutoff = total_energy = dc_temperature = radiator_temperature = None
             # Optional settings/counters must not prevent live status if unsupported.
             try:
                 settings = inv.read_holding_registers(204, 14)
@@ -94,7 +102,14 @@ class InverterClient:
             except Exception:
                 logger.warning("Battery settings unavailable; using configured fallbacks")
             try:
-                energy = inv.read_holding_registers(85, 2)
+                # The adjacent inverter temperatures share the counter request.
+                try:
+                    energy = inv.read_holding_registers(85, 7)
+                    dc_temperature = temperature_c(energy[5])
+                    radiator_temperature = temperature_c(energy[6])
+                except Exception:
+                    logger.warning("Inverter temperatures unavailable; reading load energy separately")
+                    energy = inv.read_holding_registers(85, 2)
                 total_energy = (energy[0] + (energy[1] << 16)) / 10.0
             except Exception:
                 logger.warning("Load energy counter unavailable; using sampled load")
@@ -109,6 +124,9 @@ class InverterClient:
                 total_load_energy_kwh=total_energy,
                 battery_power_watts=signed_word(data[40]),
                 battery_voltage=data[33] / 100.0 if 0 < data[33] <= 10000 else None,
+                battery_temperature_c=temperature_c(data[32]),
+                inverter_dc_temperature_c=dc_temperature,
+                inverter_radiator_temperature_c=radiator_temperature,
             )
         except Exception:
             logger.exception("Could not read inverter telemetry")

@@ -11,20 +11,24 @@ class InverterClientTests(IsolatedTestConfig, unittest.TestCase):
         values = [0] * 45
         values[0], values[14], values[28], values[34] = 2300, 300, 750, 80
         values[33] = 5490
+        values[32] = 1210
         values[40], values[41], values[44] = 65536 - 4046, 65536 - 8000, 1
         settings = [0] * 14
         settings[0], settings[9], settings[13] = 200, 1, 15
-        return values, settings, [1234, 1]
+        return values, settings, [1234, 1, 0, 0, 0, 1506, 1441]
 
     def test_registers_decode_charge_current_and_read_capacity_cutoff_and_counter(self):
         connection = Mock()
         connection.read_holding_registers.side_effect = self.registers()
         with patch("deye_notifier.inverter.client.PySolarmanV5", return_value=connection) as client:
             snapshot = InverterClient(self.settings).read_status()
-        self.assertEqual(snapshot, InverterReading(230, True, 80, 750, -80, 200, 15, 6677, -4046, 54.9))
+        self.assertEqual(
+            snapshot,
+            InverterReading(230, True, 80, 750, -80, 200, 15, 6677, -4046, 54.9, 21, 50.6, 44.1),
+        )
         self.assertEqual(client.call_args.args, (self.settings.inverter_ip, self.settings.logger_serial))
         self.assertEqual(
-            connection.read_holding_registers.call_args_list, [call(150, 45), call(204, 14), call(85, 2)]
+            connection.read_holding_registers.call_args_list, [call(150, 45), call(204, 14), call(85, 7)]
         )
         self.assertTrue(snapshot.is_grid_online)  # Register 164 is current, not mode 300.
         self.assertEqual(snapshot.battery_seconds(100), 1800)
@@ -39,7 +43,45 @@ class InverterClientTests(IsolatedTestConfig, unittest.TestCase):
         self.assertEqual(snapshot.cutoff_soc(self.settings), 20)
         self.assertIsNone(snapshot.battery_capacity_ah)
         self.assertIsNone(snapshot.total_load_energy_kwh)
+        self.assertIsNone(snapshot.inverter_dc_temperature_c)
+        self.assertIsNone(snapshot.inverter_radiator_temperature_c)
+        self.assertEqual(snapshot.battery_temperature_c, 21)
         self.assertTrue(snapshot.is_grid_online)
+
+    def test_temperature_decoding_preserves_zero_and_negative_celsius(self):
+        for raw, expected in ((1000, 0), (950, -5), (0, None), (59395, None), (65535, None)):
+            with self.subTest(raw=raw):
+                values, settings, energy = self.registers()
+                values[32] = energy[5] = energy[6] = raw
+                connection = Mock()
+                connection.read_holding_registers.side_effect = [values, settings, energy]
+                with patch("deye_notifier.inverter.client.PySolarmanV5", return_value=connection):
+                    snapshot = InverterClient(self.settings).read_status()
+                self.assertEqual(snapshot.battery_temperature_c, expected)
+                self.assertEqual(snapshot.inverter_dc_temperature_c, expected)
+                self.assertEqual(snapshot.inverter_radiator_temperature_c, expected)
+                self.assertEqual(snapshot.total_load_energy_kwh, 6677)
+
+    def test_unsupported_inverter_temperature_range_preserves_load_energy_counter(self):
+        values, settings, energy = self.registers()
+        connection = Mock()
+        connection.read_holding_registers.side_effect = [
+            values,
+            settings,
+            OSError("unsupported temperature range"),
+            energy[:2],
+        ]
+        with patch("deye_notifier.inverter.client.PySolarmanV5", return_value=connection):
+            snapshot = InverterClient(self.settings).read_status()
+        self.assertEqual(snapshot.total_load_energy_kwh, 6677)
+        self.assertEqual(snapshot.battery_temperature_c, 21)
+        self.assertIsNone(snapshot.inverter_dc_temperature_c)
+        self.assertIsNone(snapshot.inverter_radiator_temperature_c)
+        self.assertEqual(
+            connection.read_holding_registers.call_args_list,
+            [call(150, 45), call(204, 14), call(85, 7), call(85, 2)],
+        )
+        connection.disconnect.assert_called_once()
 
     def test_voltage_controlled_battery_does_not_use_soc_shutdown(self):
         values, settings, energy = self.registers()

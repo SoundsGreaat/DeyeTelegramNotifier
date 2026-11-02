@@ -18,6 +18,9 @@ _DETAIL_LABELS = {
         "updated": "Last reading",
         "grid": "Grid",
         "battery_voltage": "Battery voltage",
+        "inverter_dc_temperature": "DC transformer temperature",
+        "inverter_radiator_temperature": "Inverter radiator temperature",
+        "battery_temperature": "Battery temperature",
     },
     "uk": {
         "title": "Статус системи",
@@ -30,6 +33,9 @@ _DETAIL_LABELS = {
         "updated": "Останнє зчитування",
         "grid": "Мережа",
         "battery_voltage": "Напруга батареї",
+        "inverter_dc_temperature": "Температура DC-трансформатора",
+        "inverter_radiator_temperature": "Температура радіатора інвертора",
+        "battery_temperature": "Температура батарей",
     },
     "es": {
         "title": "Estado del sistema",
@@ -42,6 +48,9 @@ _DETAIL_LABELS = {
         "updated": "Última lectura",
         "grid": "Red",
         "battery_voltage": "Voltaje de batería",
+        "inverter_dc_temperature": "Temperatura del transformador DC",
+        "inverter_radiator_temperature": "Temperatura del disipador del inversor",
+        "battery_temperature": "Temperatura de batería",
     },
     "de": {
         "title": "Systemstatus",
@@ -54,6 +63,9 @@ _DETAIL_LABELS = {
         "updated": "Letzte Messung",
         "grid": "Netz",
         "battery_voltage": "Batteriespannung",
+        "inverter_dc_temperature": "Temperatur des DC-Transformators",
+        "inverter_radiator_temperature": "Temperatur des Wechselrichterkühlkörpers",
+        "battery_temperature": "Batterietemperatur",
     },
 }
 
@@ -63,6 +75,12 @@ def _finite(value):
         return value is not None and math.isfinite(float(value))
     except (TypeError, ValueError):
         return False
+
+
+def _temperature_line(label, value):
+    if _finite(value) and -100 < float(value) <= 200:
+        return f"🌡️ {label}: {float(value):.1f} °C"
+    return ""
 
 
 def _is_stale(observed_at, settings, now):
@@ -152,10 +170,22 @@ def render_status(
     if voltage_line:
         lines.append(voltage_line.lstrip("\n"))
     lines.append(locales.get_load_line(language, load_watts).lstrip("\n"))
+    for label, field in (
+        ("inverter_dc_temperature", "inverter_dc_temperature_c"),
+        ("inverter_radiator_temperature", "inverter_radiator_temperature_c"),
+    ):
+        temperature_line = _temperature_line(labels[label], getattr(reading, field, None))
+        if temperature_line:
+            lines.append(temperature_line)
 
     battery_line = locales.get_battery_level_line(language, soc)
     if battery_line:
         lines.append(battery_line.lstrip("\n"))
+    temperature_line = _temperature_line(
+        labels["battery_temperature"], getattr(reading, "battery_temperature_c", None)
+    )
+    if temperature_line:
+        lines.append(temperature_line)
     battery_voltage = getattr(reading, "battery_voltage", None)
     if _finite(battery_voltage) and float(battery_voltage) >= 0:
         unit_v = "В" if language == "uk" else "V"

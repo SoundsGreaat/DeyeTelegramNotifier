@@ -18,6 +18,9 @@ def sample_reading(**overrides):
         "total_load_energy_kwh": 1234.5,
         "battery_power_watts": 500,
         "battery_voltage": 52.4,
+        "battery_temperature_c": 21.0,
+        "inverter_dc_temperature_c": 50.6,
+        "inverter_radiator_temperature_c": 44.1,
         "charge_power_watts": None,
         "is_grid_online": False,
         "is_charging": False,
@@ -79,6 +82,7 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertEqual(actual, expected)
         self.assertNotIn("Estimated runtime", actual)
+        self.assertNotIn("°C", actual)
 
     def test_detailed_status_includes_available_measurements_in_order(self):
         text = render_status(
@@ -91,6 +95,9 @@ class StatusFormatTests(unittest.TestCase):
         )
         for value in (
             "Battery voltage: 52.4 V",
+            "DC transformer temperature: 50.6 °C",
+            "Inverter radiator temperature: 44.1 °C",
+            "Battery temperature: 21.0 °C",
             "Battery current: 12.3 A",
             "Battery capacity: 200 Ah",
             "Shutdown cutoff: 20%",
@@ -101,6 +108,10 @@ class StatusFormatTests(unittest.TestCase):
         ):
             self.assertIn(value, text)
         self.assertLess(text.index("Load: 1000 W"), text.index("Battery: 80%"))
+        self.assertLess(text.index("Load: 1000 W"), text.index("DC transformer temperature:"))
+        self.assertLess(text.index("Inverter radiator temperature:"), text.index("Battery: 80%"))
+        self.assertLess(text.index("Battery: 80%"), text.index("Battery temperature:"))
+        self.assertLess(text.index("Battery temperature:"), text.index("Battery voltage:"))
         self.assertLess(text.index("Battery: 80%"), text.index("Battery voltage:"))
         self.assertLess(text.index("Battery voltage:"), text.index("DC discharge:"))
         self.assertLess(text.index("DC discharge:"), text.index("Estimated runtime"))
@@ -111,6 +122,9 @@ class StatusFormatTests(unittest.TestCase):
             "en",
             sample_reading(
                 battery_voltage=None,
+                battery_temperature_c=None,
+                inverter_dc_temperature_c=None,
+                inverter_radiator_temperature_c=None,
                 battery_current=None,
                 battery_capacity_ah=None,
                 shutdown_soc=None,
@@ -133,6 +147,32 @@ class StatusFormatTests(unittest.TestCase):
         ):
             self.assertNotIn(label, text)
         self.assertIn("Shutdown cutoff: 20%", text)
+        self.assertNotIn("°C", text)
+
+    def test_invalid_temperatures_are_omitted_without_hiding_zero_or_negative_values(self):
+        for value in (None, float("nan"), float("inf"), -100, 5839.5):
+            with self.subTest(value=value):
+                text = render_status(
+                    "en",
+                    sample_reading(
+                        battery_temperature_c=value,
+                        inverter_dc_temperature_c=value,
+                        inverter_radiator_temperature_c=value,
+                    ),
+                    self.settings,
+                    detailed=True,
+                    **self.kwargs,
+                )
+                self.assertNotIn("°C", text)
+        text = render_status(
+            "en",
+            sample_reading(battery_temperature_c=0, inverter_dc_temperature_c=-5),
+            self.settings,
+            detailed=True,
+            **self.kwargs,
+        )
+        self.assertIn("Battery temperature: 0.0 °C", text)
+        self.assertIn("DC transformer temperature: -5.0 °C", text)
 
     def test_stale_detailed_status_is_marked_and_hides_predictions(self):
         for language, marker in (
@@ -182,6 +222,10 @@ class StatusFormatTests(unittest.TestCase):
                 )
                 self.assertIn("52.4", text)
                 self.assertIn("108", text)
+                self.assertEqual(text.count("°C"), 3)
+                if language != "en":
+                    self.assertNotIn("Battery temperature:", text)
+                    self.assertNotIn("Inverter radiator temperature:", text)
                 self.assertNotIn("Estimated runtime", text)
 
 
