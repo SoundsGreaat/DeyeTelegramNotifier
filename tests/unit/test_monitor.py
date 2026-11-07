@@ -370,7 +370,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(call.args[2] is True for call in record.await_args_list))
         self.assertEqual(
             [call.args[0] for call in monitor.broadcast.await_args_list],
-            ["grid_voltage_high", "grid_disconnected", "grid_reconnected"],
+            ["grid_voltage_high", "grid_voltage_normal", "grid_reconnected"],
         )
         self.assertIsNone(monitor._load_followup_task)
 

@@ -97,14 +97,19 @@ class StatusFormatTests(unittest.TestCase):
                             detailed=detailed,
                             **self.kwargs,
                         )
-                        self.assertIn(locales.get_message(language, "online"), text)
                         self.assertNotIn(locales.get_message(language, "offline"), text)
                         self.assertIn(locales.get_message(language, "inverter_disconnected"), text)
                         self.assertIn(f"{voltage:.1f}", text)
                         self.assertIn(locales.get_state_duration_line(language, True, 7200).strip(), text)
                         if voltage != 230:
                             key = "voltage_high" if voltage == 280 else "voltage_low"
-                            self.assertIn(locales.get_message(language, key), text)
+                            warning = locales.get_message(language, key)
+                            self.assertIn(warning, text.splitlines()[1])
+                            self.assertEqual(text.count(warning), 1)
+                            self.assertNotIn(locales.get_message(language, "online"), text)
+                            self.assertNotIn("🟢", text)
+                        else:
+                            self.assertIn(locales.get_message(language, "online"), text)
 
     def test_real_outage_does_not_show_voltage_or_open_relay_as_a_separate_problem(self):
         text = render_status(

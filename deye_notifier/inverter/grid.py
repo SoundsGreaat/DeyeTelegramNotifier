@@ -42,12 +42,13 @@ class GridAlertState:
         if voltage_state in {"high", "low"}:
             if voltage_state != self.voltage_state:
                 event = f"grid_voltage_{voltage_state}"
-        elif connected is False and (self.disconnected is not True or self.voltage_state in {"high", "low"}):
+        elif self.voltage_state in {"high", "low"}:
+            # Voltage recovery is useful even while the relay is still waiting.
+            event = "grid_voltage_normal"
+        elif connected is False and self.disconnected is not True:
             event = "grid_disconnected"
         elif connected is True and self.disconnected is True:
             event = "grid_reconnected"
-        elif self.voltage_state in {"high", "low"}:
-            event = "grid_voltage_normal"
 
         if suppress_connection_events and event in {"grid_disconnected", "grid_reconnected"}:
             event = None

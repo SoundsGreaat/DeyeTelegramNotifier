@@ -151,13 +151,16 @@ def render_status(
         getattr(settings, "grid_voltage_min", 180),
         getattr(settings, "grid_voltage_max", 260),
     )
+    grid_label = grid_warning_line.lstrip("\n") or locales.get_message(
+        language, "online" if is_online else "offline"
+    )
 
     if not detailed:
         forecast_line = locales.get_forecast_line(language, forecast_action, forecast_text)
         return locales.get_message(
             language,
             "status",
-            grid_status=locales.get_message(language, "online" if is_online else "offline"),
+            grid_status=grid_label,
             voltage=reading.grid_voltage,
             voltage_line=locales.get_voltage_line(language, reading.grid_voltage) if is_online else "",
             battery=soc,
@@ -168,11 +171,9 @@ def render_status(
             charge_time_line=charge_time_line,
             forecast_line=forecast_line,
             grid_connection_line=grid_connection_line,
-            grid_warning_line=grid_warning_line,
         )
 
     labels = _DETAIL_LABELS.get(language, _DETAIL_LABELS["en"])
-    grid_label = locales.get_message(language, "online" if is_online else "offline")
     heading = labels["last_known"] if stale else labels["title"]
     lines = [f"📊 <b>{heading}</b>", f"{labels['grid']}: {grid_label}"]
     duration_line = locales.get_state_duration_line(language, is_online, state_duration)
@@ -181,9 +182,8 @@ def render_status(
     voltage_line = locales.get_voltage_line(language, reading.grid_voltage) if is_online else ""
     if voltage_line:
         lines.append(voltage_line.lstrip("\n"))
-    for line in (grid_warning_line, grid_connection_line):
-        if line:
-            lines.append(line.lstrip("\n"))
+    if grid_connection_line:
+        lines.append(grid_connection_line.lstrip("\n"))
     lines.append(locales.get_load_line(language, load_watts).lstrip("\n"))
     if forecast_action and forecast_text:
         safe_forecast = escape(str(forecast_text))

@@ -19,8 +19,17 @@ class GridAlertTests(unittest.TestCase):
     def test_high_voltage_waiting_relay_and_actual_reconnection_are_distinct(self):
         self.assertEqual(
             self.events([(280, False), (270, False), (230, False), (230, False), (230, True)]),
-            ["grid_voltage_high", "grid_disconnected", "grid_reconnected"],
+            ["grid_voltage_high", "grid_voltage_normal", "grid_reconnected"],
         )
+
+    def test_recovery_is_announced_once_regardless_of_relay_state(self):
+        for connected in (False, True, None):
+            for abnormal, warning in ((150, "grid_voltage_low"), (280, "grid_voltage_high")):
+                with self.subTest(connected=connected, abnormal=abnormal):
+                    self.assertEqual(
+                        self.events([(abnormal, False), (230, connected), (230, connected)]),
+                        [warning, "grid_voltage_normal"],
+                    )
 
     def test_high_and_low_recovery_use_hysteresis_and_do_not_repeat_on_every_poll(self):
         self.assertEqual(
