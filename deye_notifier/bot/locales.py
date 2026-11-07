@@ -16,11 +16,19 @@ MESSAGES = {
         "warning_battery": "⚠️ <b>Power Outage</b>\nGrid was available: {duration}{load_line}{battery_level_line}{runtime_line}{forecast_line}",
         "outage_load": "⚡ Load: {load:.0f} W{runtime_line}",
         "power_restored": "✅ <b>Power Restored</b>\nGrid was unavailable: {duration}{voltage_line}{forecast_line}",
+        "grid_voltage_high": "⚠️ <b>High grid voltage</b>{voltage_line}",
+        "grid_voltage_low": "⚠️ <b>Low grid voltage</b>{voltage_line}",
+        "grid_voltage_normal": "✅ <b>Grid voltage recovered</b>{voltage_line}",
+        "grid_disconnected": "⚠️ <b>Inverter disconnected from grid</b>{voltage_line}{load_line}{battery_level_line}{runtime_line}",
+        "grid_reconnected": "✅ <b>Inverter reconnected to grid</b>{voltage_line}",
+        "inverter_disconnected": "⚠️ Inverter disconnected from grid",
+        "voltage_high": "⚠️ High grid voltage",
+        "voltage_low": "⚠️ Low grid voltage",
         "battery_full": "🔋 <b>Battery Fully Charged</b>\nLevel: 100%",
         "battery_charging": "📈 <b>Battery Charging</b>\nLevel: {level}%{charge_power_line}{charge_time_line}",
         "battery_discharging": "📉 <b>Battery Discharging</b>\nLevel: {level}%{load_line}{runtime_line}",
         "battery_low": "⚠️ <b>Battery Low</b>\nLevel: {level}%{load_line}{runtime_line}",
-        "status": "📊 <b>System Status</b>\nGrid: {grid_status}{state_duration_line}{voltage_line}\nLoad: {load:.0f} W\nBattery: {battery}%{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
+        "status": "📊 <b>System Status</b>\nGrid: {grid_status}{state_duration_line}{voltage_line}{grid_warning_line}{grid_connection_line}\nLoad: {load:.0f} W\nBattery: {battery}%{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
         "online": "Online 🟢",
         "offline": "Offline 🔴",
         "connection_failed": "❌ Connection failed",
@@ -43,11 +51,19 @@ MESSAGES = {
         "warning_battery": "⚠️ <b>Світло вимкнено</b>\nСвітло було: {duration}{load_line}{battery_level_line}{runtime_line}{forecast_line}",
         "outage_load": "⚡ Навантаження: {load:.0f} Вт{runtime_line}",
         "power_restored": "✅ <b>Світло увімкнено</b>\nСвітла не було: {duration}{voltage_line}{forecast_line}",
+        "grid_voltage_high": "⚠️ <b>Висока напруга мережі</b>{voltage_line}",
+        "grid_voltage_low": "⚠️ <b>Низька напруга мережі</b>{voltage_line}",
+        "grid_voltage_normal": "✅ <b>Напруга мережі відновилася</b>{voltage_line}",
+        "grid_disconnected": "⚠️ <b>Інвертор відключився від мережі</b>{voltage_line}{load_line}{battery_level_line}{runtime_line}",
+        "grid_reconnected": "✅ <b>Інвертор підключився до мережі</b>{voltage_line}",
+        "inverter_disconnected": "⚠️ Інвертор відключений від мережі",
+        "voltage_high": "⚠️ Висока напруга мережі",
+        "voltage_low": "⚠️ Низька напруга мережі",
         "battery_full": "🔋 <b>Батарея повністю заряджена</b>\nРівень: 100%",
         "battery_charging": "📈 <b>Батарея заряджається</b>\nРівень: {level}%{charge_power_line}{charge_time_line}",
         "battery_discharging": "📉 <b>Батарея розряджається</b>\nРівень: {level}%{load_line}{runtime_line}",
         "battery_low": "⚠️ <b>Низький заряд батареї</b>\nРівень: {level}%{load_line}{runtime_line}",
-        "status": "📊 <b>Статус системи</b>\nМережа: {grid_status}{state_duration_line}{voltage_line}\nНавантаження: {load:.0f} Вт\nБатарея: {battery}%{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
+        "status": "📊 <b>Статус системи</b>\nМережа: {grid_status}{state_duration_line}{voltage_line}{grid_warning_line}{grid_connection_line}\nНавантаження: {load:.0f} Вт\nБатарея: {battery}%{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
         "online": "В мережі 🟢",
         "offline": "Відсутня 🔴",
         "connection_failed": "❌ Не вдалося підключитися до інвертора",
@@ -70,11 +86,19 @@ MESSAGES = {
         "warning_battery": "⚠️ <b>Corte de electricidad</b>\nLa red estuvo disponible: {duration}{load_line}{battery_level_line}{runtime_line}{forecast_line}",
         "outage_load": "⚡ Carga: {load:.0f} W{runtime_line}",
         "power_restored": "✅ <b>Energía restaurada</b>\nLa red estuvo ausente: {duration}{voltage_line}{forecast_line}",
+        "grid_voltage_high": "⚠️ <b>Voltaje de red alto</b>{voltage_line}",
+        "grid_voltage_low": "⚠️ <b>Voltaje de red bajo</b>{voltage_line}",
+        "grid_voltage_normal": "✅ <b>Voltaje de red recuperado</b>{voltage_line}",
+        "grid_disconnected": "⚠️ <b>Inversor desconectado de la red</b>{voltage_line}{load_line}{battery_level_line}{runtime_line}",
+        "grid_reconnected": "✅ <b>Inversor reconectado a la red</b>{voltage_line}",
+        "inverter_disconnected": "⚠️ Inversor desconectado de la red",
+        "voltage_high": "⚠️ Voltaje de red alto",
+        "voltage_low": "⚠️ Voltaje de red bajo",
         "battery_full": "🔋 <b>Batería Completamente Cargada</b>\nNivel: 100%",
         "battery_charging": "📈 <b>Batería cargándose</b>\nNivel: {level}%{charge_power_line}{charge_time_line}",
         "battery_discharging": "📉 <b>Batería descargándose</b>\nNivel: {level}%{load_line}{runtime_line}",
         "battery_low": "⚠️ <b>Batería baja</b>\nNivel: {level}%{load_line}{runtime_line}",
-        "status": "📊 <b>Estado del sistema</b>\nRed: {grid_status}{state_duration_line}{voltage_line}\nCarga: {load:.0f} W\nBatería: {battery}%{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
+        "status": "📊 <b>Estado del sistema</b>\nRed: {grid_status}{state_duration_line}{voltage_line}{grid_warning_line}{grid_connection_line}\nCarga: {load:.0f} W\nBatería: {battery}%{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
         "online": "En línea 🟢",
         "offline": "Fuera de línea 🔴",
         "connection_failed": "❌ No se pudo conectar",
@@ -97,11 +121,19 @@ MESSAGES = {
         "warning_battery": "⚠️ <b>Stromausfall</b>\nNetz war verfügbar: {duration}{load_line}{battery_level_line}{runtime_line}{forecast_line}",
         "outage_load": "⚡ Last: {load:.0f} W{runtime_line}",
         "power_restored": "✅ <b>Strom wiederhergestellt</b>\nNetz war ausgefallen: {duration}{voltage_line}{forecast_line}",
+        "grid_voltage_high": "⚠️ <b>Hohe Netzspannung</b>{voltage_line}",
+        "grid_voltage_low": "⚠️ <b>Niedrige Netzspannung</b>{voltage_line}",
+        "grid_voltage_normal": "✅ <b>Netzspannung wieder im Bereich</b>{voltage_line}",
+        "grid_disconnected": "⚠️ <b>Wechselrichter vom Netz getrennt</b>{voltage_line}{load_line}{battery_level_line}{runtime_line}",
+        "grid_reconnected": "✅ <b>Wechselrichter wieder mit dem Netz verbunden</b>{voltage_line}",
+        "inverter_disconnected": "⚠️ Wechselrichter vom Netz getrennt",
+        "voltage_high": "⚠️ Hohe Netzspannung",
+        "voltage_low": "⚠️ Niedrige Netzspannung",
         "battery_full": "🔋 <b>Batterie voll geladen</b>\nStand: 100%",
         "battery_charging": "📈 <b>Batterie wird geladen</b>\nStand: {level}%{charge_power_line}{charge_time_line}",
         "battery_discharging": "📉 <b>Batterie entlädt</b>\nStand: {level}%{load_line}{runtime_line}",
         "battery_low": "⚠️ <b>Batteriestand niedrig</b>\nStand: {level}%{load_line}{runtime_line}",
-        "status": "📊 <b>Systemstatus</b>\nNetz: {grid_status}{state_duration_line}{voltage_line}\nLast: {load:.0f} W\nBatterie: {battery}%{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
+        "status": "📊 <b>Systemstatus</b>\nNetz: {grid_status}{state_duration_line}{voltage_line}{grid_warning_line}{grid_connection_line}\nLast: {load:.0f} W\nBatterie: {battery}%{runtime_line}{charge_power_line}{charge_time_line}{forecast_line}",
         "online": "Online 🟢",
         "offline": "Offline 🔴",
         "connection_failed": "❌ Verbindung fehlgeschlagen",
@@ -140,10 +172,25 @@ def get_message(lang_code, key, **kwargs):
             "load_line": "",
             "battery_level_line": "",
             "voltage_line": "",
+            "grid_warning_line": "",
+            "grid_connection_line": "",
             **kwargs,
         }
         return msg.format(**values)
     return msg
+
+
+def get_grid_connection_line(lang_code, is_online, connected):
+    if is_online and connected is False:
+        return "\n" + get_message(lang_code, "inverter_disconnected")
+    return ""
+
+
+def get_grid_warning_line(lang_code, is_online, voltage, minimum, maximum):
+    if not is_online:
+        return ""
+    key = "voltage_high" if voltage > maximum else "voltage_low" if voltage < minimum else None
+    return "\n" + get_message(lang_code, key) if key else ""
 
 
 def get_forecast_line(lang_code, action, forecast):

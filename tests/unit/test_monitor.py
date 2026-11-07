@@ -184,7 +184,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
     async def test_zero_load_outage_gets_one_fresh_followup_after_five_seconds(self):
         monitor = self.outage_monitor(
             [
-                InverterReading(220, False, 70, 0),
+                InverterReading(0, False, 70, 0),
                 InverterReading(0, False, 70, 500, 10, 200, 20),
                 InverterReading(0, False, 70, 600, 12, 200, 20),
             ]
@@ -209,7 +209,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
     async def test_followup_does_not_send_zero_failed_or_restored_readings(self):
         for reading in (InverterReading(0, False, 70, 0), None, InverterReading(230, True, 70, 500)):
             with self.subTest(reading=reading):
-                monitor = self.outage_monitor([InverterReading(220, False, 70, 0), reading])
+                monitor = self.outage_monitor([InverterReading(0, False, 70, 0), reading])
                 with (
                     patch.object(telemetry, "record_sample", AsyncMock()),
                     patch.object(state_repository, "record_transition", AsyncMock()),
@@ -223,9 +223,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(monitor.read_inverter.call_count, 2)
 
     async def test_restoration_before_timeout_cancels_the_pending_read(self):
-        monitor = self.outage_monitor(
-            [InverterReading(220, False, 70, 0), InverterReading(230, True, 70, 500)]
-        )
+        monitor = self.outage_monitor([InverterReading(0, False, 70, 0), InverterReading(230, True, 70, 500)])
         waiting = asyncio.Event()
         release = asyncio.Event()
 
@@ -257,7 +255,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         monitor.broadcast.assert_not_awaited()
 
     async def test_shutdown_cancels_the_delayed_task_before_closing_resources(self):
-        monitor = self.outage_monitor([InverterReading(220, False, 70, 0)])
+        monitor = self.outage_monitor([InverterReading(0, False, 70, 0)])
         with (
             patch.object(telemetry, "record_sample", AsyncMock()),
             patch.object(state_repository, "record_transition", AsyncMock()),
@@ -270,9 +268,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(monitor.read_inverter.call_count, 1)
 
     async def test_discharge_milestone_during_followup_does_not_duplicate_load_update(self):
-        monitor = self.outage_monitor(
-            [InverterReading(220, False, 76, 0), InverterReading(0, False, 75, 500)]
-        )
+        monitor = self.outage_monitor([InverterReading(0, False, 76, 0), InverterReading(0, False, 75, 500)])
         monitor.last_battery_soc = 76
         with (
             patch.object(telemetry, "record_sample", AsyncMock()),
@@ -286,9 +282,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(monitor.broadcast.await_args.kwargs["load"], 500)
 
     async def test_discharge_milestone_before_timeout_cancels_duplicate_load_update(self):
-        monitor = self.outage_monitor(
-            [InverterReading(220, False, 76, 0), InverterReading(0, False, 75, 500)]
-        )
+        monitor = self.outage_monitor([InverterReading(0, False, 76, 0), InverterReading(0, False, 75, 500)])
         monitor.last_battery_soc = 76
         waiting = asyncio.Event()
         release = asyncio.Event()
@@ -320,7 +314,7 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(minimum=minimum, initial=initial, settled=settled):
                 monitor = self.outage_monitor(
-                    [InverterReading(220, False, 70, initial), InverterReading(0, False, 70, settled)]
+                    [InverterReading(0, False, 70, initial), InverterReading(0, False, 70, settled)]
                 )
                 monitor.settings = replace(self.settings, min_load_watts=minimum)
                 with (
@@ -353,3 +347,110 @@ class MonitorTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         self.assertTrue(estimate.is_charging)
         self.assertIsNone(estimate.seconds_remaining)
         self.assertIsNone(monitor.latest_reading.runtime_seconds(self.settings))
+
+    async def test_voltage_protection_and_relay_delay_do_not_change_grid_history(self):
+        monitor = self.outage_monitor(
+            [
+                InverterReading(280, False, 70, 500),
+                InverterReading(270, False, 70, 500),
+                InverterReading(230, False, 70, 500),
+                InverterReading(230, True, 70, 500),
+            ]
+        )
+        since = monitor.last_status_time
+        with (
+            patch.object(telemetry, "record_sample", AsyncMock()) as record,
+            patch.object(state_repository, "record_transition", AsyncMock()) as transition,
+        ):
+            for _ in range(4):
+                await monitor.check()
+        self.assertTrue(monitor.is_grid_online)
+        self.assertEqual(monitor.last_status_time, since)
+        transition.assert_not_awaited()
+        self.assertTrue(all(call.args[2] is True for call in record.await_args_list))
+        self.assertEqual(
+            [call.args[0] for call in monitor.broadcast.await_args_list],
+            ["grid_voltage_high", "grid_disconnected", "grid_reconnected"],
+        )
+        self.assertIsNone(monitor._load_followup_task)
+
+    async def test_grid_restoration_is_recorded_before_the_relay_reconnects(self):
+        monitor = self.outage_monitor(
+            [
+                InverterReading(230, False, 70, 500),
+                InverterReading(230, False, 70, 500),
+                InverterReading(230, True, 70, 500),
+            ]
+        )
+        monitor.is_grid_online = False
+        with (
+            patch.object(telemetry, "record_sample", AsyncMock()),
+            patch.object(state_repository, "record_transition", AsyncMock()) as transition,
+        ):
+            await monitor.check()
+            transition.assert_awaited_once()
+            self.assertIs(transition.await_args.args[1], True)
+            self.assertTrue(monitor.is_grid_online)
+            monitor.broadcast.assert_not_awaited()
+            await monitor.check()
+            monitor.broadcast.assert_not_awaited()
+            await monitor.check()
+        transition.assert_awaited_once()
+        monitor.broadcast.assert_awaited_once_with("grid_reconnected", voltage=230)
+
+    async def test_first_abnormal_reading_alerts_but_normal_startup_is_quiet(self):
+        for voltage, connected, expected in (
+            (230, True, None),
+            (280, False, "grid_voltage_high"),
+            (150, False, "grid_voltage_low"),
+            (230, False, "grid_disconnected"),
+        ):
+            with self.subTest(voltage=voltage, connected=connected):
+                monitor = self.outage_monitor([InverterReading(voltage, connected, 70, 500)])
+                monitor.is_grid_online = None
+                with (
+                    patch.object(state_repository, "load_monitor_state", AsyncMock(return_value=None)),
+                    patch.object(state_repository, "save_initial_monitor_state", AsyncMock()),
+                    patch.object(telemetry, "record_sample", AsyncMock()),
+                ):
+                    await monitor.check()
+                if expected is None:
+                    monitor.broadcast.assert_not_awaited()
+                elif expected == "grid_disconnected":
+                    monitor.broadcast.assert_awaited_once_with(
+                        expected,
+                        voltage=voltage,
+                        load=500,
+                        level=70,
+                        runtime_eta_seconds=None,
+                        battery_cutoff_soc=20,
+                    )
+                else:
+                    monitor.broadcast.assert_awaited_once_with(expected, voltage=voltage)
+
+    async def test_corrupt_voltage_never_becomes_an_outage_or_a_fresh_reading(self):
+        for voltage in (float("nan"), float("inf"), -1, 6553.5):
+            with self.subTest(voltage=voltage):
+                monitor = self.outage_monitor([InverterReading(voltage, False, 70, 500)])
+                with (
+                    patch.object(telemetry, "record_sample", AsyncMock()) as record,
+                    patch.object(state_repository, "record_transition", AsyncMock()) as transition,
+                ):
+                    self.assertIsNone(await monitor.check())
+                transition.assert_not_awaited()
+                record.assert_not_awaited()
+                monitor.broadcast.assert_not_awaited()
+                self.assertTrue(monitor.is_grid_online)
+                self.assertIsNone(monitor.latest_reading)
+
+    async def test_voltage_alert_is_retried_if_its_durable_enqueue_fails(self):
+        monitor = self.outage_monitor([InverterReading(280, False, 70, 500)] * 2)
+        monitor.broadcast.side_effect = [RuntimeError("synthetic enqueue failure"), None]
+        with patch.object(telemetry, "record_sample", AsyncMock()):
+            with self.assertRaisesRegex(RuntimeError, "synthetic enqueue failure"):
+                await monitor.check()
+            await monitor.check()
+        self.assertEqual(monitor.broadcast.await_count, 2)
+        self.assertTrue(
+            all(call.args[0] == "grid_voltage_high" for call in monitor.broadcast.await_args_list)
+        )

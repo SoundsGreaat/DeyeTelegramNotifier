@@ -141,6 +141,16 @@ def render_status(
         if not stale and is_charging and soc < 100
         else ""
     )
+    grid_connection_line = locales.get_grid_connection_line(
+        language, is_online, getattr(reading, "grid_connected", None)
+    )
+    grid_warning_line = locales.get_grid_warning_line(
+        language,
+        is_online,
+        reading.grid_voltage,
+        getattr(settings, "grid_voltage_min", 180),
+        getattr(settings, "grid_voltage_max", 260),
+    )
 
     if not detailed:
         forecast_line = locales.get_forecast_line(language, forecast_action, forecast_text)
@@ -157,6 +167,8 @@ def render_status(
             charge_power_line=charge_power_line,
             charge_time_line=charge_time_line,
             forecast_line=forecast_line,
+            grid_connection_line=grid_connection_line,
+            grid_warning_line=grid_warning_line,
         )
 
     labels = _DETAIL_LABELS.get(language, _DETAIL_LABELS["en"])
@@ -169,6 +181,9 @@ def render_status(
     voltage_line = locales.get_voltage_line(language, reading.grid_voltage) if is_online else ""
     if voltage_line:
         lines.append(voltage_line.lstrip("\n"))
+    for line in (grid_warning_line, grid_connection_line):
+        if line:
+            lines.append(line.lstrip("\n"))
     lines.append(locales.get_load_line(language, load_watts).lstrip("\n"))
     if forecast_action and forecast_text:
         safe_forecast = escape(str(forecast_text))

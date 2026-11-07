@@ -112,7 +112,7 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         wait = SimpleNamespace(edit_text=AsyncMock())
         message = SimpleNamespace(chat=SimpleNamespace(id=123), answer=AsyncMock(return_value=wait))
         monitor = SimpleNamespace(
-            check=AsyncMock(return_value=InverterReading(230, False, 75, 500, 10, 200, 15)),
+            check=AsyncMock(return_value=InverterReading(0, False, 75, 500, 10, 200, 15)),
             last_status_time=datetime.now(timezone.utc),
             charging_estimate=lambda: ChargingEstimate(False, None),
         )

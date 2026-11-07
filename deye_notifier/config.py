@@ -54,6 +54,9 @@ class Settings:
     log_level: str = "INFO"
     min_load_watts: float = 10
     live_status_interval: float = 60
+    grid_voltage_min: float = 180
+    grid_voltage_max: float = 260
+    grid_voltage_hysteresis: float = 5
     battery_capacity_kwh: float = 0
     battery_cutoff_soc: float = 20
     battery_inverter_efficiency: float = 0.9
@@ -96,6 +99,13 @@ class Settings:
         report_hour = int(os.getenv("STATS_REPORT_HOUR", "9"))
         if not 0 <= report_hour <= 23:
             raise ValueError("STATS_REPORT_HOUR must be an integer between 0 and 23")
+        grid_min = _number("GRID_VOLTAGE_MIN", 180, 100, 300)
+        grid_max = _number("GRID_VOLTAGE_MAX", 260, 100, 400)
+        grid_hysteresis = _number("GRID_VOLTAGE_HYSTERESIS", 5, 0, 50)
+        if grid_max - grid_min <= 2 * grid_hysteresis:
+            raise ValueError(
+                "GRID_VOLTAGE_MAX must exceed GRID_VOLTAGE_MIN by more than twice the hysteresis"
+            )
         return cls(
             inverter_ip=os.getenv("INVERTER_IP", "192.168.1.151"),
             logger_serial=int(os.getenv("LOGGER_SERIAL", "0")),
@@ -104,6 +114,9 @@ class Settings:
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             min_load_watts=_number("MIN_LOAD_WATTS", 10, 0, 1000000),
             live_status_interval=_live_status_interval(),
+            grid_voltage_min=grid_min,
+            grid_voltage_max=grid_max,
+            grid_voltage_hysteresis=grid_hysteresis,
             battery_capacity_kwh=_number("BATTERY_CAPACITY_KWH", 0, 0, 100000),
             battery_cutoff_soc=_number("BATTERY_CUTOFF_SOC", 20, 0, 100),
             battery_inverter_efficiency=_number("BATTERY_INVERTER_EFFICIENCY", 0.9, 0.01, 1),

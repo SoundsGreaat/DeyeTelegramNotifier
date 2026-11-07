@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from support import IsolatedTestConfig, make_stats
 
+from deye_notifier.bot import locales
 from deye_notifier.database import chats as chat_repository
 from deye_notifier.database import notifications as notification_repository
 from deye_notifier.services.notifications import NotificationService
@@ -15,6 +16,93 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
     def setUp(self):
         super().setUp()
         self.bot = SimpleNamespace(send_message=AsyncMock())
+
+    async def test_voltage_and_relay_events_use_distinct_localized_messages(self):
+        for language in locales.LANGUAGES:
+            for key in (
+                "grid_voltage_high",
+                "grid_voltage_low",
+                "grid_voltage_normal",
+                "grid_disconnected",
+                "grid_reconnected",
+            ):
+                with self.subTest(language=language, key=key):
+                    event = dict(
+                        id=1,
+                        message_key=key,
+                        voltage=280
+                        if key == "grid_voltage_high"
+                        else 150
+                        if key == "grid_voltage_low"
+                        else 230,
+                        load_watts=500,
+                        duration="",
+                        level=70,
+                        threshold=None,
+                        forecast_action="",
+                        forecast_text="",
+                        report_payload=None,
+                        runtime_eta_seconds=36000,
+                        battery_cutoff_soc=20,
+                    )
+                    with (
+                        patch.object(
+                            notification_repository,
+                            "get_pending_notifications",
+                            AsyncMock(return_value=[event]),
+                        ),
+                        patch.object(
+                            chat_repository, "get_chats", AsyncMock(return_value=[(123, language)])
+                        ) as recipients,
+                        patch.object(
+                            notification_repository, "mark_notification_delivered", AsyncMock()
+                        ) as mark,
+                    ):
+                        await NotificationService(None, self.bot, self.settings).deliver_pending()
+                    text = self.bot.send_message.await_args.args[1]
+                    recipients.assert_awaited_once_with(None, stats_only=False)
+                    mark.assert_awaited_once_with(None, 1)
+                    self.assertIn(locales.get_voltage_line(language, event["voltage"]).strip(), text)
+                    self.assertNotIn(key, text)
+                    self.assertNotIn("{", text)
+                    self.assertNotIn(
+                        locales.get_message(language, "warning_battery", duration="").splitlines()[0], text
+                    )
+                    self.assertNotIn(
+                        locales.get_message(language, "power_restored", duration="").splitlines()[0], text
+                    )
+                    if key == "grid_disconnected":
+                        self.assertIn("70%", text)
+                        self.assertIn(locales.format_duration(36000, language), text)
+
+    async def test_grid_disconnection_does_not_invent_runtime_when_not_discharging(self):
+        event = dict(
+            id=1,
+            message_key="grid_disconnected",
+            voltage=230,
+            load_watts=500,
+            duration="",
+            level=70,
+            threshold=None,
+            forecast_action="",
+            forecast_text="",
+            report_payload=None,
+            runtime_eta_seconds=None,
+            battery_cutoff_soc=20,
+        )
+        with (
+            patch.object(
+                notification_repository, "get_pending_notifications", AsyncMock(return_value=[event])
+            ),
+            patch.object(chat_repository, "get_chats", AsyncMock(return_value=[(123, "en")])),
+            patch.object(notification_repository, "mark_notification_delivered", AsyncMock()),
+        ):
+            await NotificationService(None, self.bot, self.settings).deliver_pending()
+        text = self.bot.send_message.await_args.args[1]
+        self.assertIn("Inverter disconnected from grid", text)
+        self.assertIn("Load: 500 W", text)
+        self.assertIn("70%", text)
+        self.assertNotIn("Estimated runtime", text)
 
     async def test_battery_messages_include_the_appropriate_estimate(self):
         cases = (

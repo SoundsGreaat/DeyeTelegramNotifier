@@ -26,6 +26,8 @@ TELEGRAM_TOKEN=your_telegram_bot_token
 
 Battery forecasts use the inverter’s battery current, configured capacity in Ah, and shutdown SOC when available. `BATTERY_CAPACITY_KWH`, `BATTERY_CUTOFF_SOC`, and `BATTERY_INVERTER_EFFICIENCY` provide fallback runtime estimates; set capacity to the total nominal kWh of all batteries. These settings do not reconfigure the inverter. `MIN_LOAD_WATTS` (default `10`) filters small loads from outage notifications and runtime estimates.
 
+Grid availability follows incoming voltage above 100 V, independently of the inverter’s delayed grid relay. Voltage warnings use `GRID_VOLTAGE_MIN`/`GRID_VOLTAGE_MAX` (default `180`/`260` V), with `GRID_VOLTAGE_HYSTERESIS` (default `5` V) for recovery. Inverter disconnection and reconnection have separate alerts; these settings do not change its protection limits.
+
 Report settings:
 
 | Setting | Purpose |

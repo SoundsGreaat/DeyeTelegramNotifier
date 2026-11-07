@@ -10,6 +10,7 @@ from deye_notifier.database import telemetry
 from deye_notifier.database.connection import db_retry
 from deye_notifier.inverter.charging import ChargeEstimator, ChargingEstimate
 from deye_notifier.inverter.client import InverterClient
+from deye_notifier.inverter.grid import GridAlertState, valid_grid_voltage
 
 logger = logging.getLogger(__name__)
 OUTAGE_LOAD_DELAY_SECONDS = 5
@@ -31,6 +32,7 @@ class DeyeStatusMonitor:
         self.latest_reading = None
         self.latest_reading_at = None
         self._load_followup_task = None
+        self._grid_alert_state = GridAlertState()
 
     def format_duration(self, delta):
         total_seconds = int(delta.total_seconds())
@@ -180,6 +182,9 @@ class DeyeStatusMonitor:
         if reading is None:
             return
         grid_v, battery_soc, load_watts = reading.grid_voltage, reading.battery_soc, reading.load_watts
+        if not valid_grid_voltage(grid_v):
+            logger.warning("Ignoring invalid grid voltage telemetry")
+            return
         if battery_soc is None or not 0 <= battery_soc <= 100 or load_watts is None or load_watts < 0:
             logger.warning("Ignoring invalid inverter telemetry: SOC=%s load=%s", battery_soc, load_watts)
             return
@@ -248,6 +253,21 @@ class DeyeStatusMonitor:
         else:
             status_text = "OK" if currently_online else "BATTERY"
             logger.debug(f"Grid: {grid_v}V, Batt: {battery_soc}% | {status_text}")
+
+        next_grid_alert_state, grid_event = self._grid_alert_state.observe(
+            reading, self.settings, suppress_connection_events=transitioned
+        )
+        if grid_event is not None:
+            details = {}
+            if grid_event == "grid_disconnected":
+                details = {
+                    "load": load_watts,
+                    "level": battery_soc,
+                    "runtime_eta_seconds": runtime_seconds,
+                    "battery_cutoff_soc": cutoff,
+                }
+            await self.broadcast(grid_event, voltage=grid_v, **details)
+        self._grid_alert_state = next_grid_alert_state
 
         if currently_online:
             await self._cancel_load_followup()

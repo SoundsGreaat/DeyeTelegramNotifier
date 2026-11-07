@@ -29,8 +29,11 @@ The current chain is:
 | `0006_measured_telemetry` | Store measured load-energy counters and battery runtime forecasts. |
 | `0007_charge_power` | Preserve charging power with queued battery notifications. |
 | `0008_live_status` | Persist the active live status message per chat. |
+| `0009_grid_presence` | Base grid availability on measured voltage and clear incompatible saved transition state. |
 
 Both a fresh database and the project's known unversioned schemas can run `upgrade head`. The adoption revisions use conditional, additive SQL and preserve existing rows. Already timezone-aware values are left unchanged. There is no need to run `stamp`; stamping an unverified database would bypass the actual migrations.
+
+`0009_grid_presence` clears the saved grid state once because earlier releases tracked the inverter relay, while the new monitor tracks measured grid voltage. The next successful sample starts a new duration. Historical energy and outage samples remain unchanged, but older samples do not contain enough information to reconstruct grid presence from voltage.
 
 Schema adoption targets the known historical table definitions, not arbitrary manually modified schemas. Existing incompatible types, duplicate report keys, or insufficient database permissions cause an error and rollback rather than being silently repaired.
 

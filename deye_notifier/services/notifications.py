@@ -60,15 +60,26 @@ class NotificationService:
                 }
                 meaningful_load = self.settings.has_meaningful_load(event["load_watts"])
                 if (
-                    event["message_key"] in {"warning_battery", "battery_discharging", "battery_low"}
+                    event["message_key"]
+                    in {"warning_battery", "battery_discharging", "battery_low", "grid_disconnected"}
                     and not meaningful_load
                 ):
                     kwargs["load_line"] = ""
                 if (
                     event["message_key"]
-                    in {"battery_discharging", "battery_low", "warning_battery", "outage_load"}
+                    in {
+                        "battery_discharging",
+                        "battery_low",
+                        "warning_battery",
+                        "outage_load",
+                        "grid_disconnected",
+                    }
                     and event["level"] is not None
                     and meaningful_load
+                    and (
+                        event["message_key"] != "grid_disconnected"
+                        or event.get("runtime_eta_seconds") is not None
+                    )
                 ):
                     kwargs["runtime_line"] = locales.get_runtime_line(
                         language,

@@ -6,8 +6,9 @@ from dataclasses import dataclass
 
 from pysolarmanv5 import PySolarmanV5
 
+from deye_notifier.inverter.grid import VOLTAGE_THRESHOLD, valid_grid_voltage
+
 GRID_V_REG = 150
-VOLTAGE_THRESHOLD = 100
 logger = logging.getLogger(__name__)
 
 
@@ -56,9 +57,11 @@ class InverterReading:
 
     @property
     def is_grid_online(self):
-        return (
-            self.grid_connected if self.grid_connected is not None else self.grid_voltage > VOLTAGE_THRESHOLD
-        )
+        # Register 194 is the inverter relay, which also opens during protection
+        # and reconnection delays while utility voltage is still present.
+        if not valid_grid_voltage(self.grid_voltage):
+            return None
+        return self.grid_voltage > VOLTAGE_THRESHOLD
 
     def cutoff_soc(self, settings):
         return self.shutdown_soc if self.shutdown_soc is not None else settings.battery_cutoff_soc
@@ -90,6 +93,9 @@ class InverterClient:
                 self.settings.inverter_ip, self.settings.logger_serial, socket_timeout=5, verbose=False
             )
             data = inv.read_holding_registers(GRID_V_REG, 45)
+            grid_voltage = data[0] / 10.0
+            if not valid_grid_voltage(grid_voltage):
+                raise ValueError("Invalid grid voltage telemetry")
             current = signed_word(data[41]) / 100.0
             current = current if abs(current) <= 1000 else None
             capacity = cutoff = total_energy = dc_temperature = radiator_temperature = None
@@ -114,7 +120,7 @@ class InverterClient:
             except Exception:
                 logger.warning("Load energy counter unavailable; using sampled load")
             return InverterReading(
-                grid_voltage=data[0] / 10.0,
+                grid_voltage=grid_voltage,
                 grid_connected=bool(data[44]) if data[44] in (0, 1) else None,
                 battery_soc=data[34],
                 load_watts=signed_word(data[28]),

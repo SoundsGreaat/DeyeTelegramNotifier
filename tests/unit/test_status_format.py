@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from deye_notifier.bot import locales
 from deye_notifier.bot.status import render_status
+from deye_notifier.inverter.client import InverterReading
 
 
 def sample_reading(**overrides):
@@ -83,6 +84,36 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertNotIn("Estimated runtime", actual)
         self.assertNotIn("°C", actual)
+
+    def test_present_grid_with_open_relay_is_distinct_from_an_outage_in_every_language(self):
+        for language in locales.LANGUAGES:
+            for detailed in (False, True):
+                for voltage in (150, 230, 280):
+                    with self.subTest(language=language, detailed=detailed, voltage=voltage):
+                        text = render_status(
+                            language,
+                            InverterReading(voltage, False, 80, 500, 10, 200),
+                            self.settings,
+                            detailed=detailed,
+                            **self.kwargs,
+                        )
+                        self.assertIn(locales.get_message(language, "online"), text)
+                        self.assertNotIn(locales.get_message(language, "offline"), text)
+                        self.assertIn(locales.get_message(language, "inverter_disconnected"), text)
+                        self.assertIn(f"{voltage:.1f}", text)
+                        self.assertIn(locales.get_state_duration_line(language, True, 7200).strip(), text)
+                        if voltage != 230:
+                            key = "voltage_high" if voltage == 280 else "voltage_low"
+                            self.assertIn(locales.get_message(language, key), text)
+
+    def test_real_outage_does_not_show_voltage_or_open_relay_as_a_separate_problem(self):
+        text = render_status(
+            "en", InverterReading(0, False, 80, 500), self.settings, detailed=True, **self.kwargs
+        )
+        self.assertIn("Grid: Offline", text)
+        self.assertNotIn("Voltage:", text)
+        self.assertNotIn("disconnected from grid", text)
+        self.assertNotIn("Low grid voltage", text)
 
     def test_detailed_status_includes_available_measurements_in_order(self):
         text = render_status(

@@ -74,6 +74,25 @@ with patch('dotenv.load_dotenv', side_effect=AssertionError('dotenv read on impo
                 with self.assertRaises(ValueError):
                     Settings.from_env()
 
+    def test_grid_voltage_warning_settings_validate_limits_and_recovery_margin(self):
+        with patch.dict(
+            os.environ,
+            {"GRID_VOLTAGE_MIN": "190", "GRID_VOLTAGE_MAX": "255", "GRID_VOLTAGE_HYSTERESIS": "3"},
+        ):
+            settings = Settings.from_env()
+        self.assertEqual((settings.grid_voltage_min, settings.grid_voltage_max), (190, 255))
+        self.assertEqual(settings.grid_voltage_hysteresis, 3)
+        for overrides in (
+            {"GRID_VOLTAGE_MIN": "nan"},
+            {"GRID_VOLTAGE_MAX": "inf"},
+            {"GRID_VOLTAGE_HYSTERESIS": "-1"},
+            {"GRID_VOLTAGE_MIN": "270"},
+            {"GRID_VOLTAGE_MIN": "250", "GRID_VOLTAGE_MAX": "255"},
+        ):
+            with self.subTest(overrides=overrides), patch.dict(os.environ, overrides):
+                with self.assertRaises(ValueError):
+                    Settings.from_env()
+
     def test_live_refresh_interval_accepts_five_seconds_and_keeps_default(self):
         with patch.dict(os.environ):
             os.environ.pop("LIVE_STATUS_INTERVAL", None)

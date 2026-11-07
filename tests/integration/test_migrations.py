@@ -73,7 +73,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
     async def test_fresh_database_and_repeat_upgrade(self):
         await self.migrate()
         await self.migrate()
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0008_live_status",)])
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0009_grid_presence",)])
         tables = await self.sql("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
         self.assertEqual(
             {row[0] for row in tables},
@@ -137,10 +137,62 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
             "CREATE TABLE monitor_state (id BOOLEAN PRIMARY KEY, is_grid_online BOOLEAN NOT NULL, last_status_time TIMESTAMP NOT NULL)"
         )
         await self.sql("INSERT INTO monitor_state VALUES (TRUE, TRUE, '2026-01-01 12:00:00')")
-        await self.migrate(x=["legacy_timezone=Europe/Kyiv"])
+        await self.migrate("0008_live_status", x=["legacy_timezone=Europe/Kyiv"])
         self.assertEqual(await self.sql("SELECT chat_id, language FROM chats"), [(123, "en")])
         timestamp = (await self.sql("SELECT last_status_time FROM monitor_state"))[0][0]
         self.assertEqual(timestamp, datetime(2026, 1, 1, 10, tzinfo=timezone.utc))
+        await self.migrate()
+        self.assertEqual(await self.sql("SELECT count(*) FROM monitor_state"), [(0,)])
+
+    async def test_grid_presence_migration_rebaselines_state_and_retires_queued_grid_events(self):
+        await self.migrate("0008_live_status")
+        await self.sql("INSERT INTO monitor_state VALUES (TRUE, FALSE, '2026-01-01 12:00:00+00')")
+        await self.sql("INSERT INTO telemetry_samples VALUES ('2026-01-01 12:00:00+00', TRUE, 500, 80)")
+        await self.sql("""
+            INSERT INTO notification_queue (message_key, delivered_at) VALUES
+            ('warning_battery', NULL), ('power_restored', NULL), ('outage_load', NULL),
+            ('battery_charging', NULL), ('warning_battery', '2026-01-01 12:01:00+00')
+        """)
+
+        await self.migrate()
+        self.assertEqual(await self.sql("SELECT count(*) FROM monitor_state"), [(0,)])
+        self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
+        self.assertEqual(
+            await self.sql("""
+                SELECT message_key, delivered_at IS NOT NULL
+                FROM notification_queue ORDER BY id
+            """),
+            [
+                ("warning_battery", True),
+                ("power_restored", True),
+                ("outage_load", True),
+                ("battery_charging", False),
+                ("warning_battery", True),
+            ],
+        )
+        await self.sql("INSERT INTO monitor_state VALUES (TRUE, TRUE, '2026-01-01 13:00:00+00')")
+        await self.sql("""
+            INSERT INTO notification_queue (message_key, delivered_at) VALUES
+            ('grid_voltage_high', NULL), ('grid_voltage_low', NULL),
+            ('grid_voltage_normal', NULL), ('grid_disconnected', NULL), ('grid_reconnected', NULL)
+        """)
+        await self.migrate("0008_live_status", downgrade=True)
+        self.assertEqual(await self.sql("SELECT count(*) FROM monitor_state"), [(0,)])
+        self.assertEqual(
+            await self.sql("""
+                SELECT count(*) FROM notification_queue
+                WHERE message_key IN (
+                    'grid_voltage_high', 'grid_voltage_low', 'grid_voltage_normal',
+                    'grid_disconnected', 'grid_reconnected'
+                ) AND delivered_at IS NULL
+            """),
+            [(0,)],
+        )
+
+        await self.migrate()
+        await self.migrate()
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0009_grid_presence",)])
+        self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
 
     async def test_retired_language_is_migrated_without_changing_subscriptions(self):
         await self.migrate("0003_subscriptions")
@@ -281,7 +333,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "subscription preferences"):
             await self.migrate("0002_reports", downgrade=True)
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0008_live_status",)])
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0009_grid_presence",)])
         await self.migrate("0002_reports", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(await self.sql("SELECT chat_id FROM chats"), [(123,)])
 
@@ -295,12 +347,14 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
             "INSERT INTO notification_queue (message_key, report_key, report_payload) VALUES ('statistics','test', '{}')"
         )
         await self.sql("DROP TABLE alembic_version")
-        await self.migrate(x=["legacy_timezone=Europe/Kyiv"])
+        await self.migrate("0008_live_status", x=["legacy_timezone=Europe/Kyiv"])
         self.assertEqual(await self.sql("SELECT chat_id, language FROM chats"), [(123, "de")])
         self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
         self.assertEqual(await self.sql("SELECT report_key FROM notification_queue"), [("test",)])
         timestamp = (await self.sql("SELECT last_status_time FROM monitor_state"))[0][0]
         self.assertEqual(timestamp, datetime(2026, 1, 1, 12, tzinfo=timezone.utc))
+        await self.migrate()
+        self.assertEqual(await self.sql("SELECT count(*) FROM monitor_state"), [(0,)])
 
     async def test_downgrade_reupgrade_and_guarded_data_loss(self):
         await self.migrate()
@@ -312,7 +366,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "allow_data_loss"):
             await self.migrate("0001_legacy", downgrade=True)
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0008_live_status",)])
+        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0009_grid_presence",)])
         self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
         await self.migrate("0001_legacy", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(
@@ -328,10 +382,10 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         with TemporaryDirectory() as directory:
             scripts = Path(directory) / "migrations"
             shutil.copytree(db_migrations.ROOT / "migrations", scripts)
-            (scripts / "versions" / "0009_failure.py").write_text(
+            (scripts / "versions" / "0010_failure.py").write_text(
                 "from alembic import op\n"
-                "revision = '0009_failure'\n"
-                "down_revision = '0008_live_status'\n"
+                "revision = '0010_failure'\n"
+                "down_revision = '0009_grid_presence'\n"
                 "def upgrade():\n"
                 "    op.execute('CREATE TABLE migration_should_rollback (id INTEGER)')\n"
                 "    raise RuntimeError('synthetic migration failure')\n"

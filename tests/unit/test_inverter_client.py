@@ -96,10 +96,24 @@ class InverterClientTests(IsolatedTestConfig, unittest.TestCase):
         snapshot = InverterReading(0, False, 70, 390, 8, 200, 20)
         self.assertEqual(snapshot.runtime_seconds(self.settings), 45000)
         self.assertFalse(snapshot.is_grid_online)
-        self.assertEqual(InverterReading(230, False, 70, 0).is_grid_online, False)
+        self.assertTrue(InverterReading(230, False, 70, 0).is_grid_online)
+        self.assertTrue(InverterReading(280, False, 70, 0).is_grid_online)
+        self.assertFalse(InverterReading(0, True, 70, 0).is_grid_online)
         self.assertTrue(InverterReading(230, None, 70, 0).is_grid_online)
         self.assertEqual(InverterReading(0, False, 10, 0, 8, 200, 20).runtime_seconds(self.settings), 0)
         self.assertIsNone(InverterReading(0, False, 70, 0, 0, 200).runtime_seconds(self.settings))
+
+    def test_invalid_voltage_samples_are_unknown_and_not_returned_by_client(self):
+        for value in (float("nan"), float("inf"), -1, 6553.5):
+            with self.subTest(value=value):
+                self.assertIsNone(InverterReading(value, True, 70, 0).is_grid_online)
+        values, _, _ = self.registers()
+        values[0] = 65535
+        connection = Mock()
+        connection.read_holding_registers.return_value = values
+        with patch("deye_notifier.inverter.client.PySolarmanV5", return_value=connection):
+            self.assertIsNone(InverterClient(self.settings).read_status())
+        connection.disconnect.assert_called_once()
 
     def test_failed_read_still_disconnects(self):
         connection = Mock()
