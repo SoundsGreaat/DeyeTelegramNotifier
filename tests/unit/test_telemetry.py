@@ -44,7 +44,55 @@ class TelemetryEnergyCounterTests(unittest.TestCase):
         asyncio.run(record_sample(pool, observed_at, True, 123, 80, total_load_energy_kwh=12.5))
         query, args = pool.connection.execute_call
         self.assertIn("total_load_energy_kwh", query)
-        self.assertEqual(args[-1], 12.5)
+        self.assertEqual(args[4], 12.5)
+
+    def test_record_sample_persists_complete_optional_reading(self):
+        pool = _Pool()
+        observed_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        asyncio.run(
+            record_sample(
+                pool,
+                observed_at,
+                True,
+                123,
+                80,
+                grid_voltage=231.5,
+                grid_connected=False,
+                battery_current=-7.2,
+                battery_capacity_ah=200,
+                shutdown_soc=20,
+                battery_power_watts=-400,
+                battery_voltage=53.8,
+                battery_temperature_c=22.4,
+                inverter_dc_temperature_c=49,
+                inverter_radiator_temperature_c=41.5,
+                runtime_eta_seconds=7200,
+                charge_eta_seconds=3600,
+                battery_cutoff_soc=15,
+            )
+        )
+        query, args = pool.connection.execute_call
+        self.assertIn("inverter_radiator_temperature_c", query)
+        self.assertEqual(len(args), 18)
+        self.assertEqual(
+            args[5:],
+            (231.5, False, -7.2, 200.0, 20.0, -400, 53.8, 22.4, 49.0, 41.5, 7200.0, 3600.0, 15.0),
+        )
+
+    def test_record_sample_rejects_invalid_optional_reading_before_database_write(self):
+        pool = _Pool()
+        with self.assertRaisesRegex(ValueError, "grid_voltage"):
+            asyncio.run(
+                record_sample(
+                    pool,
+                    datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    True,
+                    123,
+                    80,
+                    grid_voltage=float("nan"),
+                )
+            )
+        self.assertIsNone(pool.connection.execute_call)
 
     def test_fetch_samples_selects_counter_for_all_boundary_sets(self):
         pool = _Pool()

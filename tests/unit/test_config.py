@@ -12,6 +12,36 @@ from deye_notifier.database.migrations import migration_config
 
 
 class ConfigurationTests(IsolatedTestConfig, unittest.TestCase):
+    def test_api_is_opt_in_and_requires_a_separate_valid_secret(self):
+        self.assertFalse(Settings.from_env().api_enabled)
+        for token in ("", "short", "x" * 31, "x" * 257, "x" * 32 + " ", "т" * 32):
+            with (
+                self.subTest(length=len(token)),
+                patch.dict(os.environ, {"API_ENABLED": "true", "API_TOKEN": token}),
+            ):
+                with self.assertRaisesRegex(ValueError, "API_TOKEN") as error:
+                    Settings.from_env()
+                if token:
+                    self.assertNotIn(token, str(error.exception))
+        with patch.dict(os.environ, {"API_ENABLED": "true", "API_TOKEN": "synthetic_test_token_" + "x" * 32}):
+            settings = Settings.from_env()
+        self.assertTrue(settings.api_enabled)
+        self.assertNotIn(settings.api_token, repr(settings))
+
+    def test_api_bind_and_port_are_validated_without_affecting_migrations(self):
+        for env in (
+            {"API_ENABLED": "maybe"},
+            {"API_PORT": "0"},
+            {"API_PORT": "65536"},
+            {"API_PORT": "8000.5"},
+            {"API_HOST": ""},
+            {"API_HOST": "127.0.0.1/api"},
+        ):
+            with self.subTest(env=env), patch.dict(os.environ, env):
+                with self.assertRaises(ValueError):
+                    Settings.from_env()
+                self.assertFalse(Settings.from_database_env().api_enabled)
+
     def test_both_entry_points_delegate_to_the_application_runner(self):
         with patch("deye_notifier.app.run") as run:
             runpy.run_path(str(PROJECT_ROOT / "main.py"), run_name="__main__")

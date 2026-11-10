@@ -30,10 +30,13 @@ The current chain is:
 | `0007_charge_power` | Preserve charging power with queued battery notifications. |
 | `0008_live_status` | Persist the active live status message per chat. |
 | `0009_grid_presence` | Base grid availability on measured voltage and clear incompatible saved transition state. |
+| `0010_full_telemetry` | Store complete inverter measurements and battery forecasts in telemetry history for the read-only API. |
 
 Both a fresh database and the project's known unversioned schemas can run `upgrade head`. The adoption revisions use conditional, additive SQL and preserve existing rows. Already timezone-aware values are left unchanged. There is no need to run `stamp`; stamping an unverified database would bypass the actual migrations.
 
 `0009_grid_presence` clears the saved grid state once because earlier releases tracked the inverter relay, while the new monitor tracks measured grid voltage. The next successful sample starts a new duration. Historical energy and outage samples remain unchanged, but older samples do not contain enough information to reconstruct grid presence from voltage.
+
+`0010_full_telemetry` adds nullable columns for grid voltage and relay state, battery current/capacity/cutoff/power/voltage/temperature, inverter temperatures, runtime and charge estimates, and effective cutoff SOC. New monitoring samples populate these columns. Existing samples remain available with `NULL` for measurements that were not recorded at the time; the migration does not fabricate historical values or delete old samples.
 
 Schema adoption targets the known historical table definitions, not arbitrary manually modified schemas. Existing incompatible types, duplicate report keys, or insufficient database permissions cause an error and rollback rather than being silently repaired.
 
@@ -104,6 +107,14 @@ Stop the bot first and deploy code compatible with the target schema. Alembic do
 Downgrading `0008_live_status` requires `-x allow_data_loss=true` while active live messages are registered.
 
 Downgrading `0006_measured_telemetry` requires `-x allow_data_loss=true` when measured energy counters have been stored; sample rows remain, but their counter values are removed.
+
+Downgrading `0010_full_telemetry` refuses to remove populated measurement columns unless `-x allow_data_loss=true` is supplied. Export any history you need first. For example, to return from head to `0009_grid_presence`:
+
+```bash
+python -m alembic -x allow_data_loss=true downgrade 0009_grid_presence
+```
+
+This drops only the columns added by `0010_full_telemetry`; the base telemetry rows and columns from earlier revisions remain. Do not use this flag unless the additional readings have been backed up or may be discarded.
 
 `0004_language_cleanup` is a one-way preference normalization. Downgrading that revision keeps English selected; it cannot distinguish migrated users from users who explicitly chose English later.
 

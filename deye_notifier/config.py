@@ -3,6 +3,7 @@
 import logging
 import math
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -26,6 +27,26 @@ def _live_status_interval():
     except ValueError:
         logger.warning("Invalid LIVE_STATUS_INTERVAL; using 60 seconds (expected 5..3600)")
         return 60
+
+
+def _api_values():
+    enabled = os.getenv("API_ENABLED", "false").strip().lower()
+    if enabled not in {"true", "false", "1", "0", "yes", "no"}:
+        raise ValueError("API_ENABLED must be true or false")
+    enabled = enabled in {"true", "1", "yes"}
+    token = os.getenv("API_TOKEN") or None
+    host = os.getenv("API_HOST", "127.0.0.1").strip()
+    try:
+        port = int(os.getenv("API_PORT", "8000"))
+    except ValueError:
+        raise ValueError("API_PORT must be an integer between 1 and 65535") from None
+    if not 1 <= port <= 65535:
+        raise ValueError("API_PORT must be an integer between 1 and 65535")
+    if not host or any(character.isspace() for character in host) or "/" in host:
+        raise ValueError("API_HOST must be a bind address or hostname")
+    if enabled and (token is None or re.fullmatch(r"[A-Za-z0-9_-]{32,256}", token) is None):
+        raise ValueError("API_TOKEN must contain 32..256 URL-safe characters when API_ENABLED=true")
+    return dict(api_enabled=enabled, api_host=host, api_port=port, api_token=token)
 
 
 def _database_values():
@@ -57,6 +78,10 @@ class Settings:
     grid_voltage_min: float = 180
     grid_voltage_max: float = 260
     grid_voltage_hysteresis: float = 5
+    api_enabled: bool = False
+    api_host: str = "127.0.0.1"
+    api_port: int = 8000
+    api_token: str | None = field(default=None, repr=False)
     battery_capacity_kwh: float = 0
     battery_cutoff_soc: float = 20
     battery_inverter_efficiency: float = 0.9
@@ -117,6 +142,7 @@ class Settings:
             grid_voltage_min=grid_min,
             grid_voltage_max=grid_max,
             grid_voltage_hysteresis=grid_hysteresis,
+            **_api_values(),
             battery_capacity_kwh=_number("BATTERY_CAPACITY_KWH", 0, 0, 100000),
             battery_cutoff_soc=_number("BATTERY_CUTOFF_SOC", 20, 0, 100),
             battery_inverter_efficiency=_number("BATTERY_INVERTER_EFFICIENCY", 0.9, 0.01, 1),

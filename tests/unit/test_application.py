@@ -1,11 +1,95 @@
+"""API startup/shutdown shares the existing bot lifecycle and database pool."""
+
+import asyncio
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from support import IsolatedTestConfig
 
 from deye_notifier import app
+
+
+class ApplicationLifecycleTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
+    def dependencies(self, *, polling=None, api_wait=None, api_start=None):
+        async def wait_forever(*args, **kwargs):
+            await asyncio.Event().wait()
+
+        self.cleanup_order = []
+
+        def closer(name):
+            async def close():
+                self.cleanup_order.append(name)
+
+            return AsyncMock(side_effect=close)
+
+        self.pool = SimpleNamespace(close=closer("pool"))
+        self.bot = SimpleNamespace(session=SimpleNamespace(close=closer("bot")))
+        self.monitor = SimpleNamespace(run=wait_forever, close=closer("monitor"), running=True)
+        self.notifier = SimpleNamespace(delivery_loop=wait_forever, running=True)
+        self.server = SimpleNamespace(
+            start=AsyncMock(side_effect=api_start),
+            wait=AsyncMock(side_effect=api_wait or wait_forever),
+            close=closer("api"),
+        )
+        self.dispatcher = SimpleNamespace(start_polling=AsyncMock(side_effect=polling))
+        for name, value in (
+            ("Bot", Mock(return_value=self.bot)),
+            ("get_db_pool", AsyncMock(return_value=self.pool)),
+            ("prepare_database", AsyncMock()),
+            ("register_bot_commands", AsyncMock()),
+            ("YasnoScheduleProvider", Mock(return_value=SimpleNamespace(run=wait_forever))),
+            ("DeyeStatusMonitor", Mock(return_value=self.monitor)),
+            ("NotificationService", Mock(return_value=self.notifier)),
+            ("LiveStatusService", Mock(return_value=SimpleNamespace(run=wait_forever))),
+            ("statistics_loop", wait_forever),
+            ("create_dispatcher", Mock(return_value=self.dispatcher)),
+            ("create_api", Mock()),
+            ("ApiServer", Mock(return_value=self.server)),
+        ):
+            self.enterContext(patch.object(app, name, value))
+
+    def enabled_settings(self):
+        return replace(self.settings, api_enabled=True, api_token="synthetic_" + "x" * 40)
+
+    async def test_api_stops_before_its_shared_pool_is_closed(self):
+        self.dependencies()
+        await app.main(self.enabled_settings())
+        self.server.start.assert_awaited_once()
+        self.assertEqual(self.cleanup_order, ["api", "monitor", "pool", "bot"])
+
+    async def test_disabled_api_does_not_bind_a_server(self):
+        self.dependencies()
+        await app.main(self.settings)
+        app.create_api.assert_not_called()
+        app.ApiServer.assert_not_called()
+        self.assertEqual(self.cleanup_order, ["monitor", "pool", "bot"])
+
+    async def test_api_bind_failure_aborts_startup_and_closes_resources(self):
+        self.dependencies(api_start=RuntimeError("synthetic bind failure"))
+        with self.assertRaisesRegex(RuntimeError, "bind failure"):
+            await app.main(self.enabled_settings())
+        self.dispatcher.start_polling.assert_not_awaited()
+        self.assertEqual(self.cleanup_order, ["api", "monitor", "pool", "bot"])
+
+    async def test_unexpected_api_exit_stops_polling_and_surfaces_failure(self):
+        cancelled = asyncio.Event()
+
+        async def polling(*args, **kwargs):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        async def api_wait():
+            return
+
+        self.dependencies(polling=polling, api_wait=api_wait)
+        with self.assertRaisesRegex(RuntimeError, "API server stopped unexpectedly"):
+            await app.main(self.enabled_settings())
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(self.cleanup_order, ["api", "monitor", "pool", "bot"])
 
 
 class ApplicationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):

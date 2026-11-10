@@ -53,6 +53,10 @@ docker compose down
 
 PostgreSQL data is stored in the `postgres_data` volume. Keep that volume across updates.
 
+## Read-only API
+
+An optional token-protected API exposes live status, telemetry history, statistics, events, and cached outage forecasts for Home Assistant. It is disabled by default. See the [API and Home Assistant guide](docs/api.md) for setup.
+
 ## Bot commands
 
 The bot registers its command menu with English descriptions at startup.
@@ -87,7 +91,7 @@ See [migration guide](docs/migrations.md) for upgrade, rollback, and revision-au
 
 ## Tests
 
-Install `requirements.txt`, then run:
+Install `requirements-dev.txt`, then run:
 
 ```bash
 python -m unittest discover -s tests -v

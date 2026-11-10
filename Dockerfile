@@ -10,4 +10,6 @@ COPY deye_notifier ./deye_notifier
 COPY alembic.ini ./
 COPY migrations ./migrations
 
+EXPOSE 8000
+
 CMD ["python", "-m", "deye_notifier"]

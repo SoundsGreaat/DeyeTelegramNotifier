@@ -6,6 +6,7 @@ import sys
 
 from aiogram import Bot, Dispatcher
 
+from deye_notifier.api import ApiServer, create_api
 from deye_notifier.bot.handlers import create_router
 from deye_notifier.bot.menu import register_bot_commands
 from deye_notifier.config import Settings
@@ -32,6 +33,7 @@ async def main(settings=None):
     bot = Bot(token=settings.telegram_token)
     pool = None
     monitor = notifier = None
+    api_server = None
     tasks = []
     try:
         pool = await get_db_pool(settings)
@@ -41,6 +43,9 @@ async def main(settings=None):
         monitor = DeyeStatusMonitor(pool, schedule_provider, settings)
         notifier = NotificationService(pool, bot, settings)
         live_status_service = LiveStatusService(pool, bot, monitor, schedule_provider, settings)
+        if settings.api_enabled:
+            api_server = ApiServer(create_api(pool, monitor, schedule_provider, settings), settings)
+            await api_server.start()
         tasks = [
             asyncio.create_task(monitor.run()),
             asyncio.create_task(notifier.delivery_loop()),
@@ -48,15 +53,28 @@ async def main(settings=None):
             asyncio.create_task(schedule_provider.run()),
             asyncio.create_task(statistics_loop(pool, settings)),
         ]
-        await create_dispatcher().start_polling(
-            bot,
-            pool=pool,
-            schedule_provider=schedule_provider,
-            monitor=monitor,
-            live_status_service=live_status_service,
-            settings=settings,
-            close_bot_session=False,
+        polling = asyncio.create_task(
+            create_dispatcher().start_polling(
+                bot,
+                pool=pool,
+                schedule_provider=schedule_provider,
+                monitor=monitor,
+                live_status_service=live_status_service,
+                settings=settings,
+                close_bot_session=False,
+            )
         )
+        tasks.append(polling)
+        if api_server is None:
+            await polling
+        else:
+            api_waiter = asyncio.create_task(api_server.wait())
+            tasks.append(api_waiter)
+            done, _ = await asyncio.wait((polling, api_waiter), return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
+            if polling not in done:
+                raise RuntimeError("API server stopped unexpectedly")
     finally:
         if monitor is not None:
             monitor.running = False
@@ -66,8 +84,12 @@ async def main(settings=None):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         try:
-            if monitor is not None:
-                await monitor.close()
+            try:
+                if api_server is not None:
+                    await api_server.close()
+            finally:
+                if monitor is not None:
+                    await monitor.close()
         finally:
             try:
                 if pool is not None:

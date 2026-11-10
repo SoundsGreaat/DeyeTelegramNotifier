@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 from support import IsolatedTestConfig, local_test_database_url
 
+from deye_notifier.database import api as api_repository
 from deye_notifier.database import chats as chat_repository
 from deye_notifier.database import live_status as live_repository
 from deye_notifier.database import migrations as db_migrations
@@ -73,7 +74,9 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
     async def test_fresh_database_and_repeat_upgrade(self):
         await self.migrate()
         await self.migrate()
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0009_grid_presence",)])
+        self.assertEqual(
+            await self.sql("SELECT version_num FROM alembic_version"), [("0010_full_telemetry",)]
+        )
         tables = await self.sql("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
         self.assertEqual(
             {row[0] for row in tables},
@@ -86,6 +89,138 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
                 "alembic_version",
                 "live_status_messages",
             },
+        )
+
+    async def test_full_telemetry_upgrade_storage_and_guarded_downgrade(self):
+        await self.migrate("0009_grid_presence")
+        await self.sql(
+            "INSERT INTO telemetry_samples "
+            "(observed_at, is_grid_online, load_watts, battery_soc, total_load_energy_kwh) "
+            "VALUES ('2026-01-01 12:00:00+00', TRUE, 500, 80, 12.5)"
+        )
+        await self.migrate()
+
+        url = local_test_database_url(os.environ["TEST_POSTGRES_DSN"])
+
+        async def setup(connection):
+            await connection.execute(f"SET search_path TO {self.schema}")
+
+        pool = await asyncpg.create_pool(
+            **url.translate_connect_args(username="user"), min_size=1, max_size=1, setup=setup
+        )
+        observed_at = datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc)
+        try:
+            await telemetry.record_sample(
+                pool,
+                observed_at,
+                False,
+                612,
+                77,
+                total_load_energy_kwh=12.7,
+                grid_voltage=278.4,
+                grid_connected=False,
+                battery_current=-11.3,
+                battery_capacity_ah=200,
+                shutdown_soc=20,
+                battery_power_watts=-607,
+                battery_voltage=52.6,
+                battery_temperature_c=23.1,
+                inverter_dc_temperature_c=50.2,
+                inverter_radiator_temperature_c=43.7,
+                runtime_eta_seconds=5814,
+                charge_eta_seconds=None,
+                battery_cutoff_soc=15,
+            )
+            samples = await telemetry.fetch_samples(pool, observed_at, observed_at)
+            self.assertEqual(len(samples), 2)
+            self.assertEqual(samples[-1]["total_load_energy_kwh"], 12.7)
+            history = await api_repository.fetch_history(
+                pool,
+                datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
+                datetime(2026, 1, 1, 13, tzinfo=timezone.utc),
+                None,
+                1,
+            )
+            self.assertEqual(len(history), 2)  # One extra row signals that another page exists.
+            self.assertIsNone(history[0]["grid_voltage"])
+            next_page = await api_repository.fetch_history(
+                pool,
+                datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
+                datetime(2026, 1, 1, 13, tzinfo=timezone.utc),
+                history[0]["observed_at"],
+                1,
+            )
+            self.assertEqual(next_page[0]["grid_voltage"], 278.4)
+            self.assertEqual(next_page[0]["battery_power_watts"], -607)
+
+            aggregates = await api_repository.fetch_aggregate(
+                pool,
+                datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
+                datetime(2026, 1, 1, 13, tzinfo=timezone.utc),
+                3600,
+            )
+            self.assertEqual(len(aggregates), 1)
+            self.assertEqual(aggregates[0]["sample_count"], 2)
+            self.assertEqual(aggregates[0]["load_watts_avg"], 556)
+            self.assertEqual(aggregates[0]["battery_temperature_c_avg"], 23.1)
+
+            await pool.execute(
+                "INSERT INTO notification_queue (message_key, created_at, voltage, load_watts) VALUES "
+                "('statistics', '2026-01-01 12:02:00', 230, 500), "
+                "('warning_battery', '2026-01-01 12:03:00', 230, 500)"
+            )
+            events = await api_repository.fetch_events(
+                pool,
+                datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
+                datetime(2026, 1, 1, 13, tzinfo=timezone.utc),
+                0,
+                100,
+            )
+            self.assertEqual([event["message_key"] for event in events], ["warning_battery"])
+            self.assertTrue(await api_repository.database_available(pool))
+        finally:
+            await pool.close()
+
+        self.assertEqual(
+            await self.sql(
+                "SELECT grid_voltage, grid_connected, battery_current, battery_capacity_ah, "
+                "shutdown_soc, battery_power_watts, battery_voltage, battery_temperature_c, "
+                "inverter_dc_temperature_c, inverter_radiator_temperature_c, runtime_eta_seconds, "
+                "charge_eta_seconds, battery_cutoff_soc FROM telemetry_samples "
+                "WHERE observed_at = '2026-01-01 12:01:00+00'"
+            ),
+            [(278.4, False, -11.3, 200.0, 20.0, -607, 52.6, 23.1, 50.2, 43.7, 5814.0, None, 15.0)],
+        )
+        with self.assertRaisesRegex(RuntimeError, "Full telemetry downgrade would remove"):
+            await self.migrate("0009_grid_presence", downgrade=True)
+        self.assertEqual(
+            await self.sql("SELECT version_num FROM alembic_version"), [("0010_full_telemetry",)]
+        )
+
+        await self.migrate("0009_grid_presence", downgrade=True, x=["allow_data_loss=true"])
+        self.assertEqual(
+            await self.sql(
+                "SELECT observed_at, load_watts, battery_soc, total_load_energy_kwh "
+                "FROM telemetry_samples ORDER BY observed_at"
+            ),
+            [
+                (datetime(2026, 1, 1, 12, tzinfo=timezone.utc), 500, 80, 12.5),
+                (observed_at, 612, 77, 12.7),
+            ],
+        )
+        columns = await self.sql(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'telemetry_samples'"
+        )
+        self.assertNotIn(("grid_voltage",), columns)
+
+        await self.migrate()
+        self.assertEqual(
+            await self.sql(
+                "SELECT grid_voltage, battery_temperature_c FROM telemetry_samples "
+                "WHERE observed_at = '2026-01-01 12:00:00+00'"
+            ),
+            [(None, None)],
         )
 
     async def test_live_message_migration_preferences_replacement_and_guarded_downgrade(self):
@@ -147,7 +282,9 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
     async def test_grid_presence_migration_rebaselines_state_and_retires_queued_grid_events(self):
         await self.migrate("0008_live_status")
         await self.sql("INSERT INTO monitor_state VALUES (TRUE, FALSE, '2026-01-01 12:00:00+00')")
-        await self.sql("INSERT INTO telemetry_samples VALUES ('2026-01-01 12:00:00+00', TRUE, 500, 80)")
+        await self.sql(
+            "INSERT INTO telemetry_samples (observed_at, is_grid_online, load_watts, battery_soc) VALUES ('2026-01-01 12:00:00+00', TRUE, 500, 80)"
+        )
         await self.sql("""
             INSERT INTO notification_queue (message_key, delivered_at) VALUES
             ('warning_battery', NULL), ('power_restored', NULL), ('outage_load', NULL),
@@ -191,7 +328,9 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
 
         await self.migrate()
         await self.migrate()
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0009_grid_presence",)])
+        self.assertEqual(
+            await self.sql("SELECT version_num FROM alembic_version"), [("0010_full_telemetry",)]
+        )
         self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
 
     async def test_retired_language_is_migrated_without_changing_subscriptions(self):
@@ -333,7 +472,9 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         )
         with self.assertRaisesRegex(RuntimeError, "subscription preferences"):
             await self.migrate("0002_reports", downgrade=True)
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0009_grid_presence",)])
+        self.assertEqual(
+            await self.sql("SELECT version_num FROM alembic_version"), [("0010_full_telemetry",)]
+        )
         await self.migrate("0002_reports", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(await self.sql("SELECT chat_id FROM chats"), [(123,)])
 
@@ -342,7 +483,9 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         await self.migrate("0002_reports")
         await self.sql("INSERT INTO chats (chat_id, language) VALUES (123, 'de')")
         await self.sql("INSERT INTO monitor_state VALUES (TRUE, TRUE, '2026-01-01 12:00:00+00')")
-        await self.sql("INSERT INTO telemetry_samples VALUES ('2026-01-01 12:00:00+00', TRUE, 500, 80)")
+        await self.sql(
+            "INSERT INTO telemetry_samples (observed_at, is_grid_online, load_watts, battery_soc) VALUES ('2026-01-01 12:00:00+00', TRUE, 500, 80)"
+        )
         await self.sql(
             "INSERT INTO notification_queue (message_key, report_key, report_payload) VALUES ('statistics','test', '{}')"
         )
@@ -360,13 +503,17 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         await self.migrate()
         await self.migrate("0001_legacy", downgrade=True)
         await self.migrate()
-        await self.sql("INSERT INTO telemetry_samples VALUES (CURRENT_TIMESTAMP, TRUE, 500, 80)")
+        await self.sql(
+            "INSERT INTO telemetry_samples (observed_at, is_grid_online, load_watts, battery_soc) VALUES (CURRENT_TIMESTAMP, TRUE, 500, 80)"
+        )
         await self.sql(
             "INSERT INTO notification_queue (message_key, report_key, report_payload) VALUES ('statistics','test', '{}')"
         )
         with self.assertRaisesRegex(RuntimeError, "allow_data_loss"):
             await self.migrate("0001_legacy", downgrade=True)
-        self.assertEqual(await self.sql("SELECT version_num FROM alembic_version"), [("0009_grid_presence",)])
+        self.assertEqual(
+            await self.sql("SELECT version_num FROM alembic_version"), [("0010_full_telemetry",)]
+        )
         self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
         await self.migrate("0001_legacy", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(
@@ -382,10 +529,10 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         with TemporaryDirectory() as directory:
             scripts = Path(directory) / "migrations"
             shutil.copytree(db_migrations.ROOT / "migrations", scripts)
-            (scripts / "versions" / "0010_failure.py").write_text(
+            (scripts / "versions" / "0011_failure.py").write_text(
                 "from alembic import op\n"
-                "revision = '0010_failure'\n"
-                "down_revision = '0009_grid_presence'\n"
+                "revision = '0011_failure'\n"
+                "down_revision = '0010_full_telemetry'\n"
                 "def upgrade():\n"
                 "    op.execute('CREATE TABLE migration_should_rollback (id INTEGER)')\n"
                 "    raise RuntimeError('synthetic migration failure')\n"
