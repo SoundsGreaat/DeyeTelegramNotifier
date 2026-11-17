@@ -15,6 +15,7 @@ async def register_bot_commands(bot):
     commands = [
         types.BotCommand(command="start", description="Enable power and battery notifications"),
         types.BotCommand(command="stop", description="Disable all notifications and automatic reports"),
+        types.BotCommand(command="notifications", description="Choose automatic notifications for this chat"),
         types.BotCommand(command="status", description="Current status and estimated battery runtime"),
         types.BotCommand(command="live", description="Create a pinned status that updates automatically"),
         types.BotCommand(command="live_off", description="Stop and unpin the live status"),

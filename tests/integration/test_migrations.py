@@ -75,7 +75,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         await self.migrate()
         await self.migrate()
         self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0010_full_telemetry",)]
+            await self.sql("SELECT version_num FROM alembic_version"), [("0011_notification_preferences",)]
         )
         tables = await self.sql("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
         self.assertEqual(
@@ -89,6 +89,89 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
                 "alembic_version",
                 "live_status_messages",
             },
+        )
+
+    async def test_notification_preferences_upgrade_preserves_flags_and_guards_downgrade(self):
+        await self.migrate("0010_full_telemetry")
+        await self.sql(
+            "INSERT INTO chats (chat_id, notifications_enabled, stats_enabled) VALUES "
+            "(123, TRUE, FALSE), (456, FALSE, TRUE)"
+        )
+        await self.migrate()
+
+        self.assertEqual(
+            await self.sql(
+                "SELECT chat_id, notifications_enabled, stats_enabled, notification_preferences "
+                "FROM chats ORDER BY chat_id"
+            ),
+            [(123, True, False, {}), (456, False, True, {})],
+        )
+        url = local_test_database_url(os.environ["TEST_POSTGRES_DSN"])
+
+        async def setup(connection):
+            await connection.execute(f"SET search_path TO {self.schema}")
+
+        pool = await asyncpg.create_pool(
+            **url.translate_connect_args(username="user"), min_size=1, max_size=1, setup=setup
+        )
+        try:
+            language, first = await chat_repository.get_notification_preferences(pool, 123)
+            self.assertEqual(language, "en")
+            self.assertTrue(first["grid_voltage_high"])
+            self.assertFalse(first["report_day"])
+
+            _, second = await chat_repository.get_notification_preferences(pool, 456)
+            self.assertFalse(second["grid_voltage_high"])
+            self.assertTrue(second["report_day"])
+
+            _, result = await chat_repository.set_notification_preference(
+                pool, 123, "grid_voltage_high", False
+            )
+            self.assertFalse(result["grid_voltage_high"])
+            _, result = await chat_repository.set_notification_preference(
+                pool, 123, "grid_voltage_high", False
+            )
+            self.assertFalse(result["grid_voltage_high"])
+            _, result = await chat_repository.set_notification_preference(pool, 123, "report_day", True)
+            self.assertTrue(result["report_day"])
+            self.assertEqual(await chat_repository.get_chats(pool, preference="grid_voltage_high"), [])
+            self.assertEqual(
+                sorted(await chat_repository.get_chats(pool, stats_only=True, preference="report_day")),
+                [(123, "en"), (456, "en")],
+            )
+            self.assertEqual(
+                await chat_repository.get_chats(pool, stats_only=True, preference="report_week"),
+                [(456, "en")],
+            )
+            await chat_repository.set_stats_subscription(pool, 123, False)
+            _, result = await chat_repository.get_notification_preferences(pool, 123)
+            self.assertFalse(result["report_day"])
+            self.assertFalse(result["grid_voltage_high"])
+            await chat_repository.set_notification_preference(pool, 123, "report_day", True)
+        finally:
+            await pool.close()
+
+        with self.assertRaisesRegex(RuntimeError, "per-chat overrides"):
+            await self.migrate("0010_full_telemetry", downgrade=True)
+        self.assertEqual(
+            await self.sql(
+                "SELECT notifications_enabled, stats_enabled, notification_preferences "
+                "FROM chats WHERE chat_id = 123"
+            ),
+            [(True, False, {"grid_voltage_high": False, "report_day": True})],
+        )
+
+        await self.migrate("0010_full_telemetry", downgrade=True, x=["allow_data_loss=true"])
+        self.assertEqual(
+            await self.sql(
+                "SELECT chat_id, notifications_enabled, stats_enabled FROM chats ORDER BY chat_id"
+            ),
+            [(123, True, False), (456, False, True)],
+        )
+        await self.migrate()
+        self.assertEqual(
+            await self.sql("SELECT notification_preferences FROM chats ORDER BY chat_id"),
+            [({},), ({},)],
         )
 
     async def test_full_telemetry_upgrade_storage_and_guarded_downgrade(self):
@@ -194,7 +277,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         with self.assertRaisesRegex(RuntimeError, "Full telemetry downgrade would remove"):
             await self.migrate("0009_grid_presence", downgrade=True)
         self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0010_full_telemetry",)]
+            await self.sql("SELECT version_num FROM alembic_version"), [("0011_notification_preferences",)]
         )
 
         await self.migrate("0009_grid_presence", downgrade=True, x=["allow_data_loss=true"])
@@ -329,7 +412,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         await self.migrate()
         await self.migrate()
         self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0010_full_telemetry",)]
+            await self.sql("SELECT version_num FROM alembic_version"), [("0011_notification_preferences",)]
         )
         self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
 
@@ -473,7 +556,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         with self.assertRaisesRegex(RuntimeError, "subscription preferences"):
             await self.migrate("0002_reports", downgrade=True)
         self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0010_full_telemetry",)]
+            await self.sql("SELECT version_num FROM alembic_version"), [("0011_notification_preferences",)]
         )
         await self.migrate("0002_reports", downgrade=True, x=["allow_data_loss=true"])
         self.assertEqual(await self.sql("SELECT chat_id FROM chats"), [(123,)])
@@ -512,7 +595,7 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         with self.assertRaisesRegex(RuntimeError, "allow_data_loss"):
             await self.migrate("0001_legacy", downgrade=True)
         self.assertEqual(
-            await self.sql("SELECT version_num FROM alembic_version"), [("0010_full_telemetry",)]
+            await self.sql("SELECT version_num FROM alembic_version"), [("0011_notification_preferences",)]
         )
         self.assertEqual(await self.sql("SELECT count(*) FROM telemetry_samples"), [(1,)])
         await self.migrate("0001_legacy", downgrade=True, x=["allow_data_loss=true"])
@@ -529,10 +612,10 @@ class PostgresMigrationTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCas
         with TemporaryDirectory() as directory:
             scripts = Path(directory) / "migrations"
             shutil.copytree(db_migrations.ROOT / "migrations", scripts)
-            (scripts / "versions" / "0011_failure.py").write_text(
+            (scripts / "versions" / "0012_failure.py").write_text(
                 "from alembic import op\n"
-                "revision = '0011_failure'\n"
-                "down_revision = '0010_full_telemetry'\n"
+                "revision = '0012_failure'\n"
+                "down_revision = '0011_notification_preferences'\n"
                 "def upgrade():\n"
                 "    op.execute('CREATE TABLE migration_should_rollback (id INTEGER)')\n"
                 "    raise RuntimeError('synthetic migration failure')\n"

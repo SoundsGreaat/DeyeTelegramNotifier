@@ -65,7 +65,10 @@ class CommandTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
 
     def message(self):
         return SimpleNamespace(
-            chat=SimpleNamespace(id=123), from_user=SimpleNamespace(language_code="uk"), answer=AsyncMock()
+            chat=SimpleNamespace(id=123, type="private"),
+            from_user=SimpleNamespace(language_code="uk"),
+            answer=AsyncMock(),
+            bot=None,
         )
 
     async def test_stats_commands_save_explicit_choice_and_respect_saved_language(self):

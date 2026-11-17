@@ -60,7 +60,7 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
                     ):
                         await NotificationService(None, self.bot, self.settings).deliver_pending()
                     text = self.bot.send_message.await_args.args[1]
-                    recipients.assert_awaited_once_with(None, stats_only=False)
+                    recipients.assert_awaited_once_with(None, stats_only=False, preference=key)
                     mark.assert_awaited_once_with(None, 1)
                     self.assertIn(locales.get_voltage_line(language, event["voltage"]).strip(), text)
                     self.assertNotIn(key, text)
@@ -188,7 +188,7 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
             await monitor.deliver_pending()
         self.assertIn("Денна", send.await_args.args[1])
         self.assertIn("3.50", send.await_args.args[1])
-        recipients.assert_awaited_once_with(None, stats_only=True)
+        recipients.assert_awaited_once_with(None, stats_only=True, preference="report_day")
         mark.assert_awaited_once_with(None, 1)
 
     async def test_report_without_opted_in_recipients_is_not_sent(self):
@@ -199,7 +199,7 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
                 "get_pending_notifications",
                 AsyncMock(
                     return_value=[
-                        {"id": 1, "message_key": "statistics"},
+                        {"id": 1, "message_key": "statistics", "report_payload": {"period": "week"}},
                     ]
                 ),
             ),
@@ -208,7 +208,7 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
             patch.object(notification_repository, "mark_notification_delivered", AsyncMock()) as mark,
         ):
             await monitor.deliver_pending()
-        recipients.assert_awaited_once_with(None, stats_only=True)
+        recipients.assert_awaited_once_with(None, stats_only=True, preference="report_week")
         send.assert_not_awaited()
         mark.assert_awaited_once_with(None, 1)
 
@@ -235,7 +235,7 @@ class NotificationDeliveryTests(IsolatedTestConfig, unittest.IsolatedAsyncioTest
             patch.object(notification_repository, "mark_notification_delivered", AsyncMock()),
         ):
             await monitor.deliver_pending()
-        recipients.assert_awaited_once_with(None, stats_only=False)
+        recipients.assert_awaited_once_with(None, stats_only=False, preference="battery_full")
         self.assertEqual(send.await_args.args[0], 123)
 
     async def test_disabled_global_reports_do_not_deliver_old_queue_events(self):

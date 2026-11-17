@@ -65,6 +65,7 @@ The bot registers its command menu with English descriptions at startup.
 | --- | --- |
 | `/start` | Enable power and battery notifications. |
 | `/stop` | Disable all notifications and automatic reports. |
+| `/notifications` | Choose which automatic messages this chat receives. |
 | `/status` | Show live inverter status and estimated battery runtime. |
 | `/live` | Create a pinned detailed status; replace the previous live message. |
 | `/live_off` | Stop updates and unpin the live message. |
@@ -77,7 +78,7 @@ The bot registers its command menu with English descriptions at startup.
 
 `/live` updates one message every `LIVE_STATUS_INTERVAL` seconds (default `60`) using existing inverter readings. It resumes after restarts; `/stop` also stops it. In groups, pinning requires the bot’s permission to pin messages.
 
-`/start` does not enable automatic reports. Report subscriptions are independent of power alerts, so `/stats_auto_on` can also be used on its own.
+Use `/notifications` to switch individual alerts and daily, weekly, or monthly reports on or off. In groups, the bot needs administrator access to verify who can change the settings. `/start` enables power alerts by default and respects individual choices. `/stats_auto_on` and `/stats_auto_off` set all three report switches together. `/stop` turns off every switch and clears individual choices.
 
 Automatic reports cover the previous day, previous week, or previous month and are sent at `STATS_REPORT_HOUR` in `STATS_TIMEZONE`.
 

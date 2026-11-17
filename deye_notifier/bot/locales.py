@@ -6,7 +6,7 @@ from datetime import timezone
 
 MESSAGES = {
     "en": {
-        "start": "✅ Power and battery notifications enabled.\n/status — current state; /stats day, /stats week or /stats month — reports on demand; /lang — language.\nAutomatic reports require a separate /stats_auto_on subscription; /stats_auto_off disables them.",
+        "start": "✅ Power and battery notifications enabled.\n/status — current state; /stats day, /stats week or /stats month — reports on demand; /lang — language.\n/notifications — choose alerts and automatic reports.",
         "stop": "❌ All notifications and automatic reports disabled.",
         "stats_auto_enabled": "✅ Automatic daily, weekly and monthly reports enabled. /stats_auto_off — disable reports.",
         "stats_auto_disabled": "🔕 Automatic reports disabled.",
@@ -41,7 +41,7 @@ MESSAGES = {
         "live_failed": "❌ Could not update live status. Please try again.",
     },
     "uk": {
-        "start": "✅ Сповіщення про мережу та батарею ввімкнено.\n/status — стан; /stats day, /stats week або /stats month — звіти за запитом; /lang — мова.\nАвтозвіти потребують окремої підписки /stats_auto_on; /stats_auto_off — вимкнути.",
+        "start": "✅ Сповіщення про мережу та батарею ввімкнено.\n/status — стан; /stats day, /stats week або /stats month — звіти за запитом; /lang — мова.\n/notifications — налаштувати сповіщення й автоматичні звіти.",
         "stop": "❌ Усі сповіщення та автоматичні звіти вимкнено.",
         "stats_auto_enabled": "✅ Автоматичні денні, тижневі й місячні звіти ввімкнено. /stats_auto_off — вимкнути звіти.",
         "stats_auto_disabled": "🔕 Автозвіти вимкнено.",
@@ -76,7 +76,7 @@ MESSAGES = {
         "live_failed": "❌ Не вдалося оновити живий статус. Спробуйте ще раз.",
     },
     "es": {
-        "start": "✅ Avisos de red y batería activados.\n/status — estado; /stats day, /stats week o /stats month — informes a petición; /lang — idioma.\nLos informes automáticos requieren /stats_auto_on; /stats_auto_off los desactiva.",
+        "start": "✅ Avisos de red y batería activados.\n/status — estado; /stats day, /stats week o /stats month — informes a petición; /lang — idioma.\n/notifications — elegir avisos e informes automáticos.",
         "stop": "❌ Todos los avisos e informes automáticos desactivados.",
         "stats_auto_enabled": "✅ Informes diarios, semanales y mensuales automáticos activados. /stats_auto_off — desactivarlos.",
         "stats_auto_disabled": "🔕 Informes automáticos desactivados.",
@@ -111,7 +111,7 @@ MESSAGES = {
         "live_failed": "❌ No se pudo actualizar el estado. Inténtalo de nuevo.",
     },
     "de": {
-        "start": "✅ Netz- und Batteriemeldungen aktiviert.\n/status — Zustand; /stats day, /stats week oder /stats month — Berichte auf Anfrage; /lang — Sprache.\nAutomatische Berichte separat mit /stats_auto_on aktivieren; /stats_auto_off — deaktivieren.",
+        "start": "✅ Netz- und Batteriemeldungen aktiviert.\n/status — Zustand; /stats day, /stats week oder /stats month — Berichte auf Anfrage; /lang — Sprache.\n/notifications — Meldungen und automatische Berichte auswählen.",
         "stop": "❌ Alle Meldungen und automatischen Berichte deaktiviert.",
         "stats_auto_enabled": "✅ Automatische Tages-, Wochen- und Monatsberichte aktiviert. /stats_auto_off — deaktivieren.",
         "stats_auto_disabled": "🔕 Automatische Berichte deaktiviert.",

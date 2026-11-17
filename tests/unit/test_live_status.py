@@ -161,7 +161,10 @@ class LiveStatusTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
     async def test_stop_command_also_stops_live_status(self):
         service = SimpleNamespace(stop=AsyncMock())
         message = SimpleNamespace(
-            chat=SimpleNamespace(id=123), from_user=SimpleNamespace(language_code="en"), answer=AsyncMock()
+            chat=SimpleNamespace(id=123, type="private"),
+            from_user=SimpleNamespace(language_code="en"),
+            answer=AsyncMock(),
+            bot=None,
         )
         with patch.object(chats, "unsubscribe_chat", AsyncMock()) as unsubscribe:
             await handlers.cmd_stop(message, None, service)

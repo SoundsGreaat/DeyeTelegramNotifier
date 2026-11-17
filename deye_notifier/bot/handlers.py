@@ -10,7 +10,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from deye_notifier import statistics
-from deye_notifier.bot import locales
+from deye_notifier.bot import locales, notification_settings
 from deye_notifier.bot.status import render_status
 from deye_notifier.config import Settings
 from deye_notifier.database import chats as chat_repository
@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 async def cmd_start(message: types.Message, pool: asyncpg.Pool):
+    if not await notification_settings.allow_notification_command(message, pool):
+        return
     user_lang = (
         message.from_user.language_code if message.from_user.language_code in locales.LANGUAGES else "en"
     )
@@ -30,6 +32,8 @@ async def cmd_start(message: types.Message, pool: asyncpg.Pool):
 
 
 async def cmd_stop(message: types.Message, pool: asyncpg.Pool, live_status_service=None):
+    if not await notification_settings.allow_notification_command(message, pool):
+        return
     if live_status_service is not None:
         await live_status_service.stop(message.chat.id)
     await chat_repository.unsubscribe_chat(pool, message.chat.id)
@@ -42,6 +46,8 @@ async def cmd_stop(message: types.Message, pool: asyncpg.Pool, live_status_servi
 async def cmd_stats_auto(
     message: types.Message, pool: asyncpg.Pool, command: CommandObject, settings: Settings
 ):
+    if not await notification_settings.allow_notification_command(message, pool):
+        return
     user_lang = getattr(message.from_user, "language_code", None)
     if user_lang not in locales.LANGUAGES:
         user_lang = "en"
@@ -160,6 +166,10 @@ def create_router():
     router = Router()
     router.message.register(cmd_start, Command("start"))
     router.message.register(cmd_stop, Command("stop"))
+    router.message.register(notification_settings.cmd_notifications, Command("notifications"))
+    router.callback_query.register(
+        notification_settings.callback_notification, F.data.startswith(notification_settings.CALLBACK_PREFIX)
+    )
     router.message.register(cmd_stats_auto, Command("stats_auto_on", "stats_auto_off"))
     router.message.register(cmd_lang, Command("lang", "language"))
     router.callback_query.register(callback_lang, F.data.startswith("lang_"))

@@ -31,12 +31,15 @@ The current chain is:
 | `0008_live_status` | Persist the active live status message per chat. |
 | `0009_grid_presence` | Base grid availability on measured voltage and clear incompatible saved transition state. |
 | `0010_full_telemetry` | Store complete inverter measurements and battery forecasts in telemetry history for the read-only API. |
+| `0011_notification_preferences` | Store per-chat notification category overrides without changing existing subscription defaults. |
 
 Both a fresh database and the project's known unversioned schemas can run `upgrade head`. The adoption revisions use conditional, additive SQL and preserve existing rows. Already timezone-aware values are left unchanged. There is no need to run `stamp`; stamping an unverified database would bypass the actual migrations.
 
 `0009_grid_presence` clears the saved grid state once because earlier releases tracked the inverter relay, while the new monitor tracks measured grid voltage. The next successful sample starts a new duration. Historical energy and outage samples remain unchanged, but older samples do not contain enough information to reconstruct grid presence from voltage.
 
 `0010_full_telemetry` adds nullable columns for grid voltage and relay state, battery current/capacity/cutoff/power/voltage/temperature, inverter temperatures, runtime and charge estimates, and effective cutoff SOC. New monitoring samples populate these columns. Existing samples remain available with `NULL` for measurements that were not recorded at the time; the migration does not fabricate historical values or delete old samples.
+
+`0011_notification_preferences` adds `chats.notification_preferences`, a JSONB object for per-chat notification overrides. The existing `notifications_enabled` and `stats_enabled` fields remain the inherited defaults; existing chats receive an empty override object and keep their current settings.
 
 Schema adoption targets the known historical table definitions, not arbitrary manually modified schemas. Existing incompatible types, duplicate report keys, or insufficient database permissions cause an error and rollback rather than being silently repaired.
 
@@ -115,6 +118,12 @@ python -m alembic -x allow_data_loss=true downgrade 0009_grid_presence
 ```
 
 This drops only the columns added by `0010_full_telemetry`; the base telemetry rows and columns from earlier revisions remain. Do not use this flag unless the additional readings have been backed up or may be discarded.
+
+Downgrading `0011_notification_preferences` refuses to remove saved per-chat overrides unless `-x allow_data_loss=true` is supplied. Existing subscription flags are preserved. To return to `0010_full_telemetry` after deliberately accepting the loss:
+
+```bash
+python -m alembic -x allow_data_loss=true downgrade 0010_full_telemetry
+```
 
 `0004_language_cleanup` is a one-way preference normalization. Downgrading that revision keeps English selected; it cannot distinguish migrated users from users who explicitly chose English later.
 

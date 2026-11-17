@@ -28,6 +28,7 @@ class CommandMenuTests(IsolatedTestConfig, unittest.IsolatedAsyncioTestCase):
         for item in register.await_args_list:
             self.assertEqual(item.kwargs["scope"].type, "default")
             commands = {command.command: command.description for command in item.args[0]}
+            self.assertIn("notifications", commands)
             self.assertEqual(commands["stats_week"], "This week's electricity statistics")
             self.assertEqual(commands["stats_month"], "This month's electricity statistics")
             self.assertTrue(all(description.isascii() for description in commands.values()))

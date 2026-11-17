@@ -19,7 +19,11 @@ class MigrationConfigurationTests(IsolatedTestConfig, unittest.TestCase):
     def test_linear_revision_history_and_offline_upgrade(self):
         config = db_migrations.migration_config(self.settings)
         script = ScriptDirectory.from_config(config)
-        self.assertEqual(script.get_heads(), ["0010_full_telemetry"])
+        self.assertEqual(script.get_heads(), ["0011_notification_preferences"])
+        self.assertEqual(
+            script.get_revision("0011_notification_preferences").down_revision,
+            "0010_full_telemetry",
+        )
         self.assertEqual(script.get_revision("0010_full_telemetry").down_revision, "0009_grid_presence")
         self.assertEqual(script.get_revision("0009_grid_presence").down_revision, "0008_live_status")
         self.assertEqual(script.get_revision("0008_live_status").down_revision, "0007_charge_power")
@@ -38,6 +42,19 @@ class MigrationConfigurationTests(IsolatedTestConfig, unittest.TestCase):
         self.assertIn("CREATE TABLE alembic_version", sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS telemetry_samples", sql)
         self.assertIn("AT TIME ZONE 'UTC'", sql)
+        self.assertIn("notification_preferences JSONB NOT NULL DEFAULT '{}'::jsonb", sql)
+
+    def test_notification_preference_downgrade_requires_online_guard_or_consent(self):
+        config = db_migrations.migration_config(self.settings)
+        config.cmd_opts = SimpleNamespace(x=[])
+        with self.assertRaisesRegex(RuntimeError, "online data-loss check"):
+            command.downgrade(config, "head:0010_full_telemetry", sql=True)
+
+        config.cmd_opts = SimpleNamespace(x=["allow_data_loss=true"])
+        output = io.StringIO()
+        config.output_buffer = output
+        command.downgrade(config, "head:0010_full_telemetry", sql=True)
+        self.assertIn("DROP COLUMN notification_preferences", output.getvalue())
 
     def test_password_special_characters_are_not_interpolated(self):
         with (

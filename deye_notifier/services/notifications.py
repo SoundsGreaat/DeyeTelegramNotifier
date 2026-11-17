@@ -10,6 +10,7 @@ from aiogram.enums import ParseMode
 from deye_notifier.bot import locales
 from deye_notifier.database import chats as chat_repository
 from deye_notifier.database import notifications as notification_repository
+from deye_notifier.notification_preferences import ALERT_KEYS, REPORT_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -28,19 +29,33 @@ class NotificationService:
             return
 
         for event in events:
-            if event["message_key"] == "outage_load" and not self.settings.has_meaningful_load(
-                event["load_watts"]
-            ):
+            message_key = event["message_key"]
+            is_report = message_key == "statistics"
+            if message_key == "outage_load" and not self.settings.has_meaningful_load(event["load_watts"]):
                 await notification_repository.mark_notification_delivered(self.pool, event["id"])
                 continue
-            if event["message_key"] == "statistics" and not self.settings.stats_auto_reports:
+            if is_report and not self.settings.stats_auto_reports:
+                await notification_repository.mark_notification_delivered(self.pool, event["id"])
+                continue
+            payload = None
+            preference = message_key
+            if is_report:
+                payload = event.get("report_payload")
+                try:
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    preference = REPORT_KEYS[payload["period"]]
+                except (ValueError, TypeError, KeyError):
+                    logger.warning("Skipping invalid queued statistics report %s", event["id"])
+                    await notification_repository.mark_notification_delivered(self.pool, event["id"])
+                    continue
+            elif message_key not in ALERT_KEYS:
+                logger.warning("Skipping unsupported queued notification %s", event["id"])
                 await notification_repository.mark_notification_delivered(self.pool, event["id"])
                 continue
             # Check preferences for each queued event, including events that
             # were created before a user opted out or before this upgrade.
-            chats = await chat_repository.get_chats(
-                self.pool, stats_only=event["message_key"] == "statistics"
-            )
+            chats = await chat_repository.get_chats(self.pool, stats_only=is_report, preference=preference)
             all_sent = True
             for chat_id, language in chats:
                 kwargs = {
@@ -100,10 +115,7 @@ class NotificationService:
                     kwargs["charge_time_line"] = locales.get_charge_time_line(
                         language, event["charge_eta_seconds"]
                     )
-                if event["report_payload"]:
-                    payload = event["report_payload"]
-                    if isinstance(payload, str):
-                        payload = json.loads(payload)
+                if is_report:
                     text = locales.format_statistics(
                         language,
                         payload["period"],
